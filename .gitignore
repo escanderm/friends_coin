@@ -15,6 +15,7 @@ blockchain_backup.json
 pending_backup.json
 users.json
 server.js
+admin.js
 
 # Старые/тестовые файлы
 old/

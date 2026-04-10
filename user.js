@@ -4,6 +4,10 @@ const WebSocket = require("ws");
 const readline = require("readline");
 const fs = require("fs");
 
+const CLIENT_VERSION = JSON.parse(fs.readFileSync(
+  require("path").join(__dirname, "package.json"), "utf8"
+)).version;
+
 class User {
   constructor(name, serverUrl = "ws://159.194.219.91:8088", walletPath = null) {
     this.name = name;
@@ -103,6 +107,7 @@ class User {
           type: "register",
           name: this.name,
           address: this.wallet.address,
+          version: CLIENT_VERSION,
         }),
       );
     });
@@ -140,6 +145,11 @@ class User {
         break;
       case "pending_update":
         this.handlePendingUpdate(msg);
+        break;
+      case "update_required":
+        console.log(`\n${"=".repeat(50)}`);
+        console.log(`   ${msg.message}`);
+        console.log(`${"=".repeat(50)}\n`);
         break;
     }
   }
