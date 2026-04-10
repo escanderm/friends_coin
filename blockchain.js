@@ -102,8 +102,18 @@ class Blockchain {
   }
 
   mineBlock(minerAddress) {
+    const maxTxPerBlock = 3;
+
+    // Случайный отбор транзакций (Fisher-Yates shuffle)
+    const shuffled = [...this.pendingTransactions];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const selectedTxs = shuffled.slice(0, maxTxPerBlock);
+
     // Считаем сумму транзакций, где майнер НЕ участник
-    const txSum = this.pendingTransactions
+    const txSum = selectedTxs
       .filter(tx => tx.from !== minerAddress && tx.to !== minerAddress)
       .reduce((sum, tx) => sum + tx.amount, 0);
 
@@ -116,24 +126,21 @@ class Blockchain {
     const rewardTx = new Transaction("SYSTEM", minerAddress, reward);
     rewardTx.signature = "reward";
 
-    // Все транзакции для блока (старые + награда)
-    const allTxs = [...this.pendingTransactions, rewardTx];
+    const allTxs = [...selectedTxs, rewardTx];
 
-    // Создаём блок
     const block = new Block(
       this.chain.length,
       allTxs,
       this.getLastBlock().hash,
     );
 
-    // Майним
     block.mine(this.difficulty);
-
-    // Добавляем в цепочку
     this.chain.push(block);
 
-    // Очищаем пул (все транзакции уже в блоке)
-    this.pendingTransactions = [];
+    // Убираем из пула только вошедшие в блок
+    this.pendingTransactions = this.pendingTransactions.filter(
+      tx => !selectedTxs.includes(tx)
+    );
 
     return block;
   }
