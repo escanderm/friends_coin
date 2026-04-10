@@ -94,6 +94,9 @@ class Blockchain {
     if (!transaction.isValid()) {
       throw new Error("Неверная подпись транзакции!");
     }
+    if (transaction.from !== "SYSTEM" && transaction.from === transaction.to) {
+      throw new Error("Нельзя отправлять монеты самому себе!");
+    }
     this.pendingTransactions.push(transaction);
   }
 

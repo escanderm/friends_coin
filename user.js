@@ -286,6 +286,11 @@ class User {
       return;
     }
 
+    if (toName === this.name) {
+      console.log("❌ Нельзя отправлять монеты самому себе!");
+      return;
+    }
+
     const toAddress = this.addressBook[toName];
     if (!toAddress) {
       console.log(`❌ Друг "${toName}" не найден в адресной книге`);
