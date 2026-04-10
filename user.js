@@ -285,16 +285,10 @@ class User {
       }
 
       this.blockchain.chain.push(msg.block);
-      for (const tx of msg.block.transactions) {
-        const index = this.blockchain.pendingTransactions.findIndex(
-          (ptx) =>
-            ptx.from === tx.from &&
-            ptx.to === tx.to &&
-            ptx.amount === tx.amount &&
-            ptx.timestamp === tx.timestamp,
-        );
-        if (index !== -1) this.blockchain.pendingTransactions.splice(index, 1);
-      }
+      const blockSigs = msg.block.transactions.map(tx => tx.signature);
+      this.blockchain.pendingTransactions = this.blockchain.pendingTransactions.filter(
+        ptx => !blockSigs.includes(ptx.signature)
+      );
       this.saveLocalBlockchain();
       console.log(`\n📦 Новый блок #${msg.block.index}`);
       this.showBalance();
