@@ -20,14 +20,15 @@ class Wallet {
     return this;
   }
 
-  load() {
+  load(customPath) {
     try {
-      const filePath = `wallet_${this.name}.json`;
+      const filePath = customPath || `wallet_${this.name}.json`;
       if (fs.existsSync(filePath)) {
         const data = fs.readFileSync(filePath, "utf8");
         const saved = JSON.parse(data);
         this.keys = saved.keys;
         this.address = saved.address;
+        this.name = saved.name || this.name;
         console.log(`📂 Загружен кошелёк из ${filePath}`);
         return true;
       }

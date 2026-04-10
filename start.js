@@ -22,6 +22,7 @@ async function main() {
     .map((f) => f.replace("wallet_", "").replace(".json", ""));
 
   let userName = null;
+  let walletPath = null;
   let isNewUser = false;
 
   if (existingWallets.length > 0) {
@@ -29,9 +30,9 @@ async function main() {
     existingWallets.forEach((name, idx) => {
       console.log(`   ${idx + 1}. ${name}`);
     });
-    console.log(
-      `   ${existingWallets.length + 1}. Создать нового пользователя`,
-    );
+    const nextNum = existingWallets.length + 1;
+    console.log(`   ${nextNum}. Создать нового пользователя`);
+    console.log(`   ${nextNum + 1}. Загрузить кошелёк с флешки/диска`);
     console.log(`   0. Выйти`);
 
     const choice = await question("\nВыберите номер: ");
@@ -43,8 +44,18 @@ async function main() {
       return;
     }
 
-    if (num === existingWallets.length + 1) {
+    if (num === nextNum) {
       isNewUser = true;
+    } else if (num === nextNum + 1) {
+      walletPath = await question("Путь к файлу кошелька (wallet_*.json): ");
+      walletPath = walletPath.trim();
+      if (!fs.existsSync(walletPath)) {
+        console.log(`❌ Файл не найден: ${walletPath}`);
+        rl.close();
+        return;
+      }
+      // Имя возьмётся из файла кошелька при загрузке
+      userName = "loading";
     } else if (num >= 1 && num <= existingWallets.length) {
       userName = existingWallets[num - 1];
       console.log(`\n✅ Добро пожаловать обратно, ${userName}!`);
@@ -55,7 +66,31 @@ async function main() {
     }
   } else {
     console.log("📂 Кошельки не найдены");
-    isNewUser = true;
+    console.log("   1. Создать нового пользователя");
+    console.log("   2. Загрузить кошелёк с флешки/диска");
+    console.log("   0. Выйти");
+
+    const choice = await question("\nВыберите номер: ");
+    const num = parseInt(choice);
+
+    if (num === 0) {
+      console.log("До свидания!");
+      rl.close();
+      return;
+    }
+
+    if (num === 2) {
+      walletPath = await question("Путь к файлу кошелька (wallet_*.json): ");
+      walletPath = walletPath.trim();
+      if (!fs.existsSync(walletPath)) {
+        console.log(`❌ Файл не найден: ${walletPath}`);
+        rl.close();
+        return;
+      }
+      userName = "loading";
+    } else {
+      isNewUser = true;
+    }
   }
 
   if (isNewUser) {
@@ -94,7 +129,7 @@ async function main() {
   rl.close();
 
   console.log("\n🚀 Запуск...\n");
-  const user = new User(userName);
+  const user = new User(userName, undefined, walletPath);
   user.init();
 
   setTimeout(() => {

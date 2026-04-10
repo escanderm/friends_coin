@@ -5,9 +5,10 @@ const readline = require("readline");
 const fs = require("fs");
 
 class User {
-  constructor(name, serverUrl = "ws://159.194.219.91:8088") {
+  constructor(name, serverUrl = "ws://159.194.219.91:8088", walletPath = null) {
     this.name = name;
     this.serverUrl = serverUrl;
+    this.walletPath = walletPath;
     this.ws = null;
     this.wallet = null;
     this.blockchain = null;
@@ -76,7 +77,7 @@ class User {
 
   loadWallet() {
     this.wallet = new Wallet(this.name);
-    if (!this.wallet.load()) {
+    if (!this.wallet.load(this.walletPath)) {
       this.wallet.generate();
       this.wallet.save();
       console.log(`\n✅ Создан новый кошелёк для ${this.name}`);
@@ -86,6 +87,7 @@ class User {
       console.log(`   ${this.wallet.keys.privateKey.substring(0, 80)}...`);
       console.log(`\n⚠️  Сохраните приватный ключ в надёжном месте!`);
     } else {
+      this.name = this.wallet.name;
       console.log(`\n📂 Загружен кошелёк ${this.name}`);
     }
     console.log(`📍 Короткий адрес: ${this.wallet.getShortAddress()}\n`);

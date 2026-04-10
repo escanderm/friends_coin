@@ -14,6 +14,7 @@ address_book_*.json
 blockchain_backup.json
 pending_backup.json
 users.json
+server.js
 
 # Старые/тестовые файлы
 old/
@@ -23,6 +24,10 @@ charlie.js
 client.js
 test.js
 test_mine.js
+
+# AI tools
+.serena/
+.claude/
 
 # OS
 .DS_Store
