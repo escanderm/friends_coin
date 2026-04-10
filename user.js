@@ -266,6 +266,24 @@ class User {
     if (!this.ready) return;
     const lastBlock = this.blockchain.getLastBlock();
     if (msg.block.previousHash === lastBlock.hash) {
+      // Проверяем награду за майнинг
+      const rewardTx = msg.block.transactions.find(tx => tx.from === "SYSTEM");
+      if (rewardTx) {
+        const minerAddress = rewardTx.to;
+        const otherTxs = msg.block.transactions.filter(
+          tx => tx.from !== "SYSTEM" && tx.from !== minerAddress && tx.to !== minerAddress
+        );
+        const txSum = otherTxs.reduce((sum, tx) => sum + tx.amount, 0);
+        const maxReward = Math.min(
+          parseFloat((txSum * this.blockchain.miningRewardPercent / 100).toFixed(2)),
+          this.blockchain.maxMiningReward
+        );
+        if (rewardTx.amount > maxReward) {
+          console.log(`\n❌ Блок #${msg.block.index} отклонён: завышенная награда (${rewardTx.amount} > ${maxReward})`);
+          return;
+        }
+      }
+
       this.blockchain.chain.push(msg.block);
       for (const tx of msg.block.transactions) {
         const index = this.blockchain.pendingTransactions.findIndex(

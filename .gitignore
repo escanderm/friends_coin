@@ -16,6 +16,8 @@ pending_backup.json
 users.json
 server.js
 admin.js
+deploy.sh
+logs.sh
 
 # Старые/тестовые файлы
 old/
