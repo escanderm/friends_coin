@@ -360,7 +360,11 @@ class User {
     const block = this.blockchain.mineBlock(this.wallet.address);
     const time = ((Date.now() - start) / 1000).toFixed(1);
 
+    const rewardTx = block.transactions.find(tx => tx.from === "SYSTEM");
+    const reward = rewardTx ? rewardTx.amount : 0;
+
     console.log(`   ⛏️ Блок #${block.index} добыт за ${time} секунд!`);
+    console.log(`   Награда: ${reward} монет (${this.blockchain.miningRewardPercent}% от массы, макс ${this.blockchain.maxMiningReward})`);
     console.log(`   Nonce: ${block.nonce}`);
     console.log(`   Хеш: ${block.hash.substring(0, 20)}...`);
 

@@ -77,7 +77,8 @@ class Blockchain {
   constructor() {
     this.chain = [this.createGenesisBlock()];
     this.pendingTransactions = [];
-    this.miningReward = 10;
+    this.miningRewardPercent = 10; // % от суммы транзакций в блоке
+    this.maxMiningReward = 10;     // потолок награды
     this.difficulty = 7;
   }
 
@@ -101,8 +102,18 @@ class Blockchain {
   }
 
   mineBlock(minerAddress) {
-    // Создаём транзакцию награды
-    const rewardTx = new Transaction("SYSTEM", minerAddress, this.miningReward);
+    // Считаем сумму транзакций, где майнер НЕ участник
+    const txSum = this.pendingTransactions
+      .filter(tx => tx.from !== minerAddress && tx.to !== minerAddress)
+      .reduce((sum, tx) => sum + tx.amount, 0);
+
+    // Награда = % от суммы транзакций, но не более потолка
+    const reward = Math.min(
+      parseFloat((txSum * this.miningRewardPercent / 100).toFixed(2)),
+      this.maxMiningReward
+    );
+
+    const rewardTx = new Transaction("SYSTEM", minerAddress, reward);
     rewardTx.signature = "reward";
 
     // Все транзакции для блока (старые + награда)
