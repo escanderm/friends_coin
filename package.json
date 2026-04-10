@@ -1,0 +1,13 @@
+{
+  "name": "friendcoin",
+  "version": "1.0.0",
+  "description": "Криптовалюта для друзей",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "client": "node start.js"
+  },
+  "dependencies": {
+    "ws": "^8.14.2"
+  }
+}

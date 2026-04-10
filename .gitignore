@@ -1,0 +1,29 @@
+# Зависимости
+node_modules/
+
+# Личные кошельки
+wallet_*.json
+
+# Личные блокчейны
+blockchain_*.json
+
+# Личные адресные книги
+address_book_*.json
+
+# Серверные данные
+blockchain_backup.json
+pending_backup.json
+users.json
+
+# Старые/тестовые файлы
+old/
+alice.js
+bob.js
+charlie.js
+client.js
+test.js
+test_mine.js
+
+# OS
+.DS_Store
+*.log
