@@ -62,12 +62,24 @@ class Block {
 
   mine(difficulty = 2) {
     const target = "0".repeat(difficulty);
+    const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let lastUpdate = Date.now();
     while (!this.hash.startsWith(target)) {
       this.nonce++;
       this.hash = this.calculateHash();
+      if (this.nonce % 50000 === 0) {
+        const now = Date.now();
+        if (now - lastUpdate > 200) {
+          const s = spinner[Math.floor(this.nonce / 50000) % spinner.length];
+          const mh = (this.nonce / ((now - this.timestamp) / 1000) / 1000000).toFixed(2);
+          process.stdout.write(`\r   ${s} nonce: ${this.nonce.toLocaleString()} | ${mh} MH/s`);
+          lastUpdate = now;
+        }
+      }
     }
+    process.stdout.write("\r" + " ".repeat(60) + "\r");
     console.log(
-      `   ⛏️  Блок ${this.index} добыт! nonce: ${this.nonce}, хеш: ${this.hash.substring(0, 10)}...`,
+      `   ⛏️  Блок ${this.index} добыт! nonce: ${this.nonce.toLocaleString()}, хеш: ${this.hash.substring(0, 10)}...`,
     );
   }
 }
