@@ -79,6 +79,7 @@ class Blockchain {
     this.pendingTransactions = [];
     this.miningRewardPercent = 10; // % от суммы транзакций в блоке
     this.maxMiningReward = 10;     // потолок награды
+    this.emptyBlockReward = 1;     // награда за пустой блок
     this.difficulty = 7;
   }
 
@@ -103,6 +104,7 @@ class Blockchain {
 
   mineBlock(minerAddress) {
     const maxTxPerBlock = 3;
+    const isEmpty = this.pendingTransactions.length === 0;
 
     // Случайный отбор транзакций (Fisher-Yates shuffle)
     const shuffled = [...this.pendingTransactions];
@@ -112,21 +114,28 @@ class Blockchain {
     }
     const selectedTxs = shuffled.slice(0, maxTxPerBlock);
 
-    // Считаем сумму транзакций, где майнер НЕ участник
-    const txSum = selectedTxs
-      .filter(tx => tx.from !== minerAddress && tx.to !== minerAddress)
-      .reduce((sum, tx) => sum + tx.amount, 0);
-
-    // Награда = % от суммы транзакций, но не более потолка
-    const reward = Math.min(
-      parseFloat((txSum * this.miningRewardPercent / 100).toFixed(2)),
-      this.maxMiningReward
-    );
+    let reward;
+    if (isEmpty) {
+      // Пустой блок — фиксированная маленькая награда
+      reward = this.emptyBlockReward;
+    } else {
+      // Считаем сумму транзакций, где майнер НЕ участник
+      const txSum = selectedTxs
+        .filter(tx => tx.from !== minerAddress && tx.to !== minerAddress)
+        .reduce((sum, tx) => sum + tx.amount, 0);
+      reward = Math.min(
+        parseFloat((txSum * this.miningRewardPercent / 100).toFixed(2)),
+        this.maxMiningReward
+      );
+    }
 
     const rewardTx = new Transaction("SYSTEM", minerAddress, reward);
     rewardTx.signature = "reward";
 
     const allTxs = [...selectedTxs, rewardTx];
+
+    // Пустой блок — сложность +1
+    const blockDifficulty = isEmpty ? this.difficulty + 1 : this.difficulty;
 
     const block = new Block(
       this.chain.length,
@@ -134,7 +143,7 @@ class Blockchain {
       this.getLastBlock().hash,
     );
 
-    block.mine(this.difficulty);
+    block.mine(blockDifficulty);
     this.chain.push(block);
 
     // Убираем из пула только вошедшие в блок

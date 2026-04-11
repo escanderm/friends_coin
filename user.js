@@ -270,14 +270,23 @@ class User {
       const rewardTx = msg.block.transactions.find(tx => tx.from === "SYSTEM");
       if (rewardTx) {
         const minerAddress = rewardTx.to;
-        const otherTxs = msg.block.transactions.filter(
-          tx => tx.from !== "SYSTEM" && tx.from !== minerAddress && tx.to !== minerAddress
-        );
-        const txSum = otherTxs.reduce((sum, tx) => sum + tx.amount, 0);
-        const maxReward = Math.min(
-          parseFloat((txSum * this.blockchain.miningRewardPercent / 100).toFixed(2)),
-          this.blockchain.maxMiningReward
-        );
+        const userTxs = msg.block.transactions.filter(tx => tx.from !== "SYSTEM");
+
+        let maxReward;
+        if (userTxs.length === 0) {
+          // Пустой блок
+          maxReward = this.blockchain.emptyBlockReward || 1;
+        } else {
+          const otherTxs = userTxs.filter(
+            tx => tx.from !== minerAddress && tx.to !== minerAddress
+          );
+          const txSum = otherTxs.reduce((sum, tx) => sum + tx.amount, 0);
+          maxReward = Math.min(
+            parseFloat((txSum * this.blockchain.miningRewardPercent / 100).toFixed(2)),
+            this.blockchain.maxMiningReward
+          );
+        }
+
         if (rewardTx.amount > maxReward) {
           console.log(`\n❌ Блок #${msg.block.index} отклонён: завышенная награда (${rewardTx.amount} > ${maxReward})`);
           return;
@@ -365,17 +374,17 @@ class User {
       return;
     }
 
-    console.log(
-      `🔍 Диагностика: pendingTransactions = ${this.blockchain?.pendingTransactions?.length || 0}`,
-    );
-
-    if (!this.blockchain || this.blockchain.pendingTransactions.length === 0) {
-      console.log("⛏️ Нет транзакций для майнинга");
+    if (!this.blockchain) {
+      console.log("⛏️ Блокчейн не загружен");
       return;
     }
 
+    const txCount = this.blockchain.pendingTransactions.length;
+    const isEmpty = txCount === 0;
     console.log(
-      `\n⛏️ Начинаю майнинг (${this.blockchain.pendingTransactions.length} транзакций)...`,
+      isEmpty
+        ? `\n⛏️ Майнинг пустого блока (сложность ${this.blockchain.difficulty + 1})...`
+        : `\n⛏️ Начинаю майнинг (${txCount} транзакций)...`,
     );
     const start = Date.now();
 
