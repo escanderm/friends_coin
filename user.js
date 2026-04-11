@@ -383,7 +383,7 @@ class User {
     const isEmpty = txCount === 0;
     console.log(
       isEmpty
-        ? `\n⛏️ Майнинг пустого блока (сложность ${this.blockchain.difficulty + 1})...`
+        ? `\n⛏️ Майнинг пустого блока (награда ${this.blockchain.emptyBlockReward} монета)...`
         : `\n⛏️ Начинаю майнинг (${txCount} транзакций)...`,
     );
     const start = Date.now();

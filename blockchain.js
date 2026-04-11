@@ -147,7 +147,7 @@ class Blockchain {
     const allTxs = [...selectedTxs, rewardTx];
 
     // Пустой блок — сложность +1
-    const blockDifficulty = isEmpty ? this.difficulty + 1 : this.difficulty;
+    const blockDifficulty = this.difficulty;
 
     const block = new Block(
       this.chain.length,
