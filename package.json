@@ -1,6 +1,6 @@
 {
   "name": "friendcoin",
-  "version": "1.0.7",
+  "version": "1.1.1",
   "description": "Криптовалюта для друзей",
   "main": "server.js",
   "scripts": {

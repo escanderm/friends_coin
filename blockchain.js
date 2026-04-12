@@ -61,10 +61,17 @@ class Block {
   }
 
   mine(difficulty = 2) {
-    const target = "0".repeat(difficulty);
+    const fullZeros = Math.floor(difficulty);
+    const fraction = difficulty - fullZeros;
+    const target = "0".repeat(fullZeros);
+    // Дробная часть: 0.5 = символ должен быть 0-7 (половина от 0-f)
+    const maxNextChar = fraction > 0 ? Math.floor(16 * (1 - fraction)) - 1 : 15;
     const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let lastUpdate = Date.now();
-    while (!this.hash.startsWith(target)) {
+    while (true) {
+      if (this.hash.startsWith(target)) {
+        if (maxNextChar >= 15 || parseInt(this.hash[fullZeros], 16) <= maxNextChar) break;
+      }
       this.nonce++;
       this.hash = this.calculateHash();
       if (this.nonce % 50000 === 0) {
@@ -92,7 +99,12 @@ class Blockchain {
     this.miningRewardPercent = 10; // % от суммы транзакций в блоке
     this.maxMiningReward = 10;     // потолок награды
     this.emptyBlockReward = 1;     // награда за пустой блок
-    this.difficulty = 7;
+    this.difficulty = 7.5;
+    this.adjustInterval = 50;      // каждые 50 блоков пересчёт сложности
+    this.targetBlockTime = 600;    // целевое время блока в секундах (10 минут)
+    this.difficultyStep = 0.25;    // шаг изменения сложности
+    this.minDifficulty = 4;        // минимальная сложность
+    this.maxDifficulty = 12;       // максимальная сложность
   }
 
   createGenesisBlock() {
@@ -102,6 +114,33 @@ class Blockchain {
 
   getLastBlock() {
     return this.chain[this.chain.length - 1];
+  }
+
+  adjustDifficulty() {
+    const len = this.chain.length;
+    if (len < this.adjustInterval + 1) return;
+    if ((len - 1) % this.adjustInterval !== 0) return;
+
+    const start = this.chain[len - this.adjustInterval];
+    const end = this.chain[len - 1];
+    const elapsed = (end.timestamp - start.timestamp) / 1000; // секунды
+    const avgTime = elapsed / this.adjustInterval;
+
+    const oldDifficulty = this.difficulty;
+
+    if (avgTime < this.targetBlockTime * 0.5) {
+      // Слишком быстро — усложняем
+      this.difficulty = Math.min(this.difficulty + this.difficultyStep, this.maxDifficulty);
+    } else if (avgTime > this.targetBlockTime * 2) {
+      // Слишком медленно — упрощаем
+      this.difficulty = Math.max(this.difficulty - this.difficultyStep, this.minDifficulty);
+    }
+
+    if (this.difficulty !== oldDifficulty) {
+      console.log(`\n📊 Пересчёт сложности (блок #${len - 1}):`);
+      console.log(`   Среднее время блока: ${avgTime.toFixed(0)} сек (цель: ${this.targetBlockTime} сек)`);
+      console.log(`   Сложность: ${oldDifficulty} → ${this.difficulty}`);
+    }
   }
 
   addTransaction(transaction) {
@@ -157,6 +196,7 @@ class Blockchain {
 
     block.mine(blockDifficulty);
     this.chain.push(block);
+    this.adjustDifficulty();
 
     // Убираем из пула только вошедшие в блок
     this.pendingTransactions = this.pendingTransactions.filter(
