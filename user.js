@@ -185,9 +185,18 @@ class User {
       );
       needSubmit = true;
     } else {
-      console.log(
-        `   ✅ Цепочки одинаковой длины (${this.blockchain.chain.length} блоков)`,
-      );
+      // Одинаковая длина — проверяем хеш последнего блока
+      const localHash = this.blockchain.getLastBlock().hash;
+      const remoteHash = remoteChain.getLastBlock().hash;
+      if (localHash !== remoteHash) {
+        console.log(`   ⚠️ Цепочки расходятся! Принимаю версию сервера.`);
+        this.blockchain = remoteChain;
+        this.saveLocalBlockchain();
+      } else {
+        console.log(
+          `   ✅ Цепочки одинаковой длины (${this.blockchain.chain.length} блоков)`,
+        );
+      }
     }
 
     console.log(
