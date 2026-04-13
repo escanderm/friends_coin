@@ -150,6 +150,9 @@ class User {
         console.log(`\n${"=".repeat(50)}`);
         console.log(`   ${msg.message}`);
         console.log(`${"=".repeat(50)}\n`);
+        this.ws.close();
+        if (this.rl) this.rl.close();
+        process.exit(1);
         break;
     }
   }
