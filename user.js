@@ -368,7 +368,7 @@ class User {
     setTimeout(() => this.showBalance(), 500);
   }
 
-  mine() {
+  async mine() {
     if (!this.ready) {
       console.log("⏳ Подождите, идёт синхронизация...");
       return;
@@ -388,8 +388,14 @@ class User {
     );
     const start = Date.now();
 
-    const block = this.blockchain.mineBlock(this.wallet.address);
+    const block = await this.blockchain.mineBlock(this.wallet.address);
     const time = ((Date.now() - start) / 1000).toFixed(1);
+
+    if (!block) {
+      console.log(`\n   ❌ Блок устарел — кто-то успел раньше (${time} сек потрачено)`);
+      console.log(`   Попробуйте mine ещё раз`);
+      return;
+    }
 
     const rewardTx = block.transactions.find(tx => tx.from === "SYSTEM");
     const reward = rewardTx ? rewardTx.amount : 0;

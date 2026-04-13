@@ -60,34 +60,48 @@ class Block {
       .digest("hex");
   }
 
-  mine(difficulty = 2) {
+  async mine(difficulty = 2, cancelCheck = null) {
     const fullZeros = Math.floor(difficulty);
     const fraction = difficulty - fullZeros;
     const target = "0".repeat(fullZeros);
-    // Дробная часть: 0.5 = символ должен быть 0-7 (половина от 0-f)
     const maxNextChar = fraction > 0 ? Math.floor(16 * (1 - fraction)) - 1 : 15;
     const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let lastUpdate = Date.now();
+    const CHUNK = 100000;
+
     while (true) {
-      if (this.hash.startsWith(target)) {
-        if (maxNextChar >= 15 || parseInt(this.hash[fullZeros], 16) <= maxNextChar) break;
-      }
-      this.nonce++;
-      this.hash = this.calculateHash();
-      if (this.nonce % 50000 === 0) {
-        const now = Date.now();
-        if (now - lastUpdate > 200) {
-          const s = spinner[Math.floor(this.nonce / 50000) % spinner.length];
-          const mh = (this.nonce / ((now - this.timestamp) / 1000) / 1000000).toFixed(2);
-          process.stdout.write(`\r   ${s} nonce: ${this.nonce.toLocaleString()} | ${mh} MH/s`);
-          lastUpdate = now;
+      // Майним чанками, давая event loop обработать сообщения
+      for (let i = 0; i < CHUNK; i++) {
+        if (this.hash.startsWith(target)) {
+          if (maxNextChar >= 15 || parseInt(this.hash[fullZeros], 16) <= maxNextChar) {
+            process.stdout.write("\r" + " ".repeat(60) + "\r");
+            console.log(
+              `   ⛏️  Блок ${this.index} добыт! nonce: ${this.nonce.toLocaleString()}, хеш: ${this.hash.substring(0, 10)}...`,
+            );
+            return true;
+          }
         }
+        this.nonce++;
+        this.hash = this.calculateHash();
+      }
+
+      const now = Date.now();
+      if (now - lastUpdate > 200) {
+        const s = spinner[Math.floor(this.nonce / CHUNK) % spinner.length];
+        const mh = (this.nonce / ((now - this.timestamp) / 1000) / 1000000).toFixed(2);
+        process.stdout.write(`\r   ${s} nonce: ${this.nonce.toLocaleString()} | ${mh} MH/s`);
+        lastUpdate = now;
+      }
+
+      // Отдаём управление event loop — WebSocket-сообщения обработаются
+      await new Promise(resolve => setImmediate(resolve));
+
+      // Проверяем, не устарел ли блок
+      if (cancelCheck && cancelCheck()) {
+        process.stdout.write("\r" + " ".repeat(60) + "\r");
+        return false;
       }
     }
-    process.stdout.write("\r" + " ".repeat(60) + "\r");
-    console.log(
-      `   ⛏️  Блок ${this.index} добыт! nonce: ${this.nonce.toLocaleString()}, хеш: ${this.hash.substring(0, 10)}...`,
-    );
   }
 }
 
@@ -153,7 +167,7 @@ class Blockchain {
     this.pendingTransactions.push(transaction);
   }
 
-  mineBlock(minerAddress) {
+  async mineBlock(minerAddress) {
     const maxTxPerBlock = 3;
     const isEmpty = this.pendingTransactions.length === 0;
 
@@ -194,7 +208,15 @@ class Blockchain {
       this.getLastBlock().hash,
     );
 
-    block.mine(blockDifficulty);
+    const prevHash = this.getLastBlock().hash;
+    const success = await block.mine(blockDifficulty, () => {
+      return this.getLastBlock().hash !== prevHash;
+    });
+
+    if (!success) {
+      return null;
+    }
+
     this.chain.push(block);
     this.adjustDifficulty();
 
