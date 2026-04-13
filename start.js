@@ -3,10 +3,12 @@ const readline = require("readline");
 const fs = require("fs");
 const path = require("path");
 
-// Если запущен как бинарник — работаем из папки где лежит бинарник
-process.chdir(path.dirname(process.execPath));
+// Если запущен как бинарник (pkg) — работаем из папки где лежит бинарник
+if (process.pkg) {
+  process.chdir(path.dirname(process.execPath));
+}
 
-const rl = readline.createInterface({
+let rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
 });
@@ -15,6 +17,121 @@ function question(prompt) {
   return new Promise((resolve) => {
     rl.question(prompt, resolve);
   });
+}
+
+function selectMenu(title, items) {
+  return new Promise((resolve) => {
+    let selected = 0;
+    const render = () => {
+      process.stdout.write("\x1B[?25l"); // скрыть курсор
+      process.stdout.write(`\x1B[${items.length + 1}A`); // вверх
+      console.log(title);
+      items.forEach((item, i) => {
+        const prefix = i === selected ? " ▸ " : "   ";
+        const style = i === selected ? "\x1B[36m\x1B[1m" : "\x1B[0m";
+        console.log(`${style}${prefix}${item}\x1B[0m`);
+      });
+    };
+
+    // Первый вывод
+    console.log(title);
+    items.forEach((item, i) => {
+      const prefix = i === selected ? " ▸ " : "   ";
+      const style = i === selected ? "\x1B[36m\x1B[1m" : "\x1B[0m";
+      console.log(`${style}${prefix}${item}\x1B[0m`);
+    });
+
+    if (!process.stdin.setRawMode) {
+      // Не интерактивный терминал — используем простой ввод
+      process.stdout.write("\nВведите номер (1-" + items.length + "): ");
+      process.stdin.resume();
+      process.stdin.once("data", (data) => {
+        const num = parseInt(data.toString().trim()) - 1;
+        resolve(num >= 0 && num < items.length ? num : 0);
+      });
+      return;
+    }
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    const onKey = (key) => {
+      if (key[0] === 27 && key[1] === 91) {
+        if (key[2] === 65) selected = Math.max(0, selected - 1); // вверх
+        if (key[2] === 66) selected = Math.min(items.length - 1, selected + 1); // вниз
+        render();
+      } else if (key[0] === 13) { // Enter
+        process.stdin.setRawMode(false);
+        process.stdin.removeListener("data", onKey);
+        process.stdout.write("\x1B[?25h"); // показать курсор
+        // Пересоздаём readline после raw mode
+        rl.close();
+        rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        resolve(selected);
+      } else if (key[0] === 3) { // Ctrl+C
+        process.stdout.write("\x1B[?25h");
+        process.exit(0);
+      }
+    };
+    process.stdin.on("data", onKey);
+  });
+}
+
+function validateWallet(filePath) {
+  try {
+    const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if (!data.name || !data.address || !data.keys || !data.keys.privateKey) {
+      return null;
+    }
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function loadFromPath() {
+  const input = await question("Путь к папке или файлу кошелька: ");
+  const trimmed = input.trim();
+
+  if (!fs.existsSync(trimmed)) {
+    console.log(`❌ Не найдено: ${trimmed}`);
+    return null;
+  }
+
+  const stat = fs.statSync(trimmed);
+
+  if (stat.isFile()) {
+    // Указали файл напрямую
+    const wallet = validateWallet(trimmed);
+    if (!wallet) {
+      console.log("❌ Файл повреждён или не является кошельком");
+      return null;
+    }
+    console.log(`✅ Кошелёк ${wallet.name} загружен`);
+    return trimmed;
+  }
+
+  if (stat.isDirectory()) {
+    // Указали папку — ищем кошельки
+    const wallets = fs.readdirSync(trimmed)
+      .filter(f => f.startsWith("wallet_") && f.endsWith(".json"));
+
+    if (wallets.length === 0) {
+      console.log("❌ Кошельки не найдены в этой папке");
+      return null;
+    }
+
+    const names = wallets.map(f => f.replace("wallet_", "").replace(".json", ""));
+    const idx = await selectMenu(`\n📂 Кошельки в ${trimmed}:`, names);
+    const filePath = path.join(trimmed, wallets[idx]);
+    const wallet = validateWallet(filePath);
+    if (!wallet) {
+      console.log("❌ Файл повреждён или не является кошельком");
+      return null;
+    }
+    console.log(`\n✅ Кошелёк ${wallet.name} загружен`);
+    return filePath;
+  }
+
+  return null;
 }
 
 async function main() {
@@ -29,72 +146,35 @@ async function main() {
   let walletPath = null;
   let isNewUser = false;
 
-  if (existingWallets.length > 0) {
-    console.log("📂 Найдены существующие кошельки:");
-    existingWallets.forEach((name, idx) => {
-      console.log(`   ${idx + 1}. ${name}`);
-    });
-    const nextNum = existingWallets.length + 1;
-    console.log(`   ${nextNum}. Создать нового пользователя`);
-    console.log(`   ${nextNum + 1}. Загрузить кошелёк с флешки/диска`);
-    console.log(`   0. Выйти`);
+  const menuItems = [
+    ...existingWallets,
+    "Создать нового пользователя",
+    "Загрузить кошелёк с флешки/диска",
+    "Выйти",
+  ];
 
-    const choice = await question("\nВыберите номер: ");
-    const num = parseInt(choice);
+  const idx = await selectMenu("📂 Выберите кошелёк:", menuItems);
 
-    if (num === 0) {
-      console.log("До свидания!");
+  if (idx === menuItems.length - 1) {
+    // Выйти
+    console.log("\nДо свидания!");
+    rl.close();
+    return;
+  } else if (idx === menuItems.length - 2) {
+    // Загрузить с флешки
+    walletPath = await loadFromPath();
+    if (!walletPath) {
       rl.close();
       return;
     }
-
-    if (num === nextNum) {
-      isNewUser = true;
-    } else if (num === nextNum + 1) {
-      walletPath = await question("Путь к файлу кошелька (wallet_*.json): ");
-      walletPath = walletPath.trim();
-      if (!fs.existsSync(walletPath)) {
-        console.log(`❌ Файл не найден: ${walletPath}`);
-        rl.close();
-        return;
-      }
-      // Имя возьмётся из файла кошелька при загрузке
-      userName = "loading";
-    } else if (num >= 1 && num <= existingWallets.length) {
-      userName = existingWallets[num - 1];
-      console.log(`\n✅ Добро пожаловать обратно, ${userName}!`);
-    } else {
-      console.log("❌ Неверный выбор");
-      rl.close();
-      return;
-    }
+    userName = "loading";
+  } else if (idx === menuItems.length - 3) {
+    // Создать нового
+    isNewUser = true;
   } else {
-    console.log("📂 Кошельки не найдены");
-    console.log("   1. Создать нового пользователя");
-    console.log("   2. Загрузить кошелёк с флешки/диска");
-    console.log("   0. Выйти");
-
-    const choice = await question("\nВыберите номер: ");
-    const num = parseInt(choice);
-
-    if (num === 0) {
-      console.log("До свидания!");
-      rl.close();
-      return;
-    }
-
-    if (num === 2) {
-      walletPath = await question("Путь к файлу кошелька (wallet_*.json): ");
-      walletPath = walletPath.trim();
-      if (!fs.existsSync(walletPath)) {
-        console.log(`❌ Файл не найден: ${walletPath}`);
-        rl.close();
-        return;
-      }
-      userName = "loading";
-    } else {
-      isNewUser = true;
-    }
+    // Существующий кошелёк
+    userName = existingWallets[idx];
+    console.log(`\n✅ Добро пожаловать обратно, ${userName}!`);
   }
 
   if (isNewUser) {
