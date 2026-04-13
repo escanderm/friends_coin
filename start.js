@@ -1,6 +1,10 @@
 const { User } = require("./user");
 const readline = require("readline");
 const fs = require("fs");
+const path = require("path");
+
+// Если запущен как бинарник — работаем из папки где лежит бинарник
+process.chdir(path.dirname(process.execPath));
 
 const rl = readline.createInterface({
   input: process.stdin,
