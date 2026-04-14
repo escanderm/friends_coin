@@ -215,8 +215,10 @@ class User {
       }
     }
 
+    this.blockchain.recalculateDifficulty();
     this.ready = true;
     this.showBalance();
+    console.log(`⛏️  Сложность майнинга: ${this.blockchain.difficulty}`);
 
     if (needSubmit) {
       this.ws.send(

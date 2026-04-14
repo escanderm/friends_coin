@@ -130,6 +130,23 @@ class Blockchain {
     return this.chain[this.chain.length - 1];
   }
 
+  recalculateDifficulty() {
+    this.difficulty = 7.5;
+    const len = this.chain.length;
+    for (let i = this.adjustInterval + 1; i <= len; i++) {
+      if ((i - 1) % this.adjustInterval !== 0) continue;
+      const start = this.chain[i - this.adjustInterval];
+      const end = this.chain[i - 1];
+      const elapsed = (end.timestamp - start.timestamp) / 1000;
+      const avgTime = elapsed / this.adjustInterval;
+      if (avgTime < this.targetBlockTime * 0.5) {
+        this.difficulty = Math.min(this.difficulty + this.difficultyStep, this.maxDifficulty);
+      } else if (avgTime > this.targetBlockTime * 2) {
+        this.difficulty = Math.max(this.difficulty - this.difficultyStep, this.minDifficulty);
+      }
+    }
+  }
+
   adjustDifficulty() {
     const len = this.chain.length;
     if (len < this.adjustInterval + 1) return;
