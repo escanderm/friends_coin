@@ -4,9 +4,9 @@ const WebSocket = require("ws");
 const readline = require("readline");
 const fs = require("fs");
 
-const CLIENT_VERSION = JSON.parse(fs.readFileSync(
-  require("path").join(__dirname, "package.json"), "utf8"
-)).version;
+const CLIENT_VERSION = JSON.parse(
+  fs.readFileSync(require("path").join(__dirname, "package.json"), "utf8"),
+).version;
 
 class User {
   constructor(name, serverUrl = "ws://159.194.219.91:8088", walletPath = null) {
@@ -146,6 +146,9 @@ class User {
       case "pending_update":
         this.handlePendingUpdate(msg);
         break;
+      case "request_sync":
+        this.handleSync(msg);
+        break;
       case "update_required":
         console.log(`\n${"=".repeat(50)}`);
         console.log(`   ${msg.message}`);
@@ -281,10 +284,14 @@ class User {
     const lastBlock = this.blockchain.getLastBlock();
     if (msg.block.previousHash === lastBlock.hash) {
       // Проверяем награду за майнинг
-      const rewardTx = msg.block.transactions.find(tx => tx.from === "SYSTEM");
+      const rewardTx = msg.block.transactions.find(
+        (tx) => tx.from === "SYSTEM",
+      );
       if (rewardTx) {
         const minerAddress = rewardTx.to;
-        const userTxs = msg.block.transactions.filter(tx => tx.from !== "SYSTEM");
+        const userTxs = msg.block.transactions.filter(
+          (tx) => tx.from !== "SYSTEM",
+        );
 
         let maxReward;
         if (userTxs.length === 0) {
@@ -292,29 +299,53 @@ class User {
           maxReward = this.blockchain.emptyBlockReward || 1;
         } else {
           const otherTxs = userTxs.filter(
-            tx => tx.from !== minerAddress && tx.to !== minerAddress
+            (tx) => tx.from !== minerAddress && tx.to !== minerAddress,
           );
           const txSum = otherTxs.reduce((sum, tx) => sum + tx.amount, 0);
           maxReward = Math.min(
-            parseFloat((txSum * this.blockchain.miningRewardPercent / 100).toFixed(2)),
-            this.blockchain.maxMiningReward
+            parseFloat(
+              ((txSum * this.blockchain.miningRewardPercent) / 100).toFixed(2),
+            ),
+            this.blockchain.maxMiningReward,
           );
         }
 
         if (rewardTx.amount > maxReward) {
-          console.log(`\n❌ Блок #${msg.block.index} отклонён: завышенная награда (${rewardTx.amount} > ${maxReward})`);
+          console.log(
+            `\n❌ Блок #${msg.block.index} отклонён: завышенная награда (${rewardTx.amount} > ${maxReward})`,
+          );
           return;
         }
       }
 
       this.blockchain.chain.push(msg.block);
-      const blockSigs = msg.block.transactions.map(tx => tx.signature);
-      this.blockchain.pendingTransactions = this.blockchain.pendingTransactions.filter(
-        ptx => !blockSigs.includes(ptx.signature)
-      );
+      const blockSigs = msg.block.transactions.map((tx) => tx.signature);
+      this.blockchain.pendingTransactions =
+        this.blockchain.pendingTransactions.filter(
+          (ptx) => !blockSigs.includes(ptx.signature),
+        );
       this.saveLocalBlockchain();
       console.log(`\n📦 Новый блок #${msg.block.index}`);
       this.showBalance();
+    } else {
+      // Цепочки расходятся — запрашиваем полную синхронизацию
+      console.log(
+        `\n⚠️ Получен блок #${msg.block.index}, но предыдущий хеш не совпадает`,
+      );
+      console.log(
+        `   Мой последний блок: #${lastBlock.index} (${lastBlock.hash.substring(0, 12)}...)`,
+      );
+      console.log(
+        `   Ожидался хеш: ${msg.block.previousHash.substring(0, 12)}...`,
+      );
+      console.log(`   🔄 Запрашиваю полную синхронизацию...`);
+      this.requestSync();
+    }
+  }
+
+  requestSync() {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "request_sync" }));
     }
   }
 
@@ -406,16 +437,20 @@ class User {
     const time = ((Date.now() - start) / 1000).toFixed(1);
 
     if (!block) {
-      console.log(`\n   ❌ Блок устарел — кто-то успел раньше (${time} сек потрачено)`);
+      console.log(
+        `\n   ❌ Блок устарел — кто-то успел раньше (${time} сек потрачено)`,
+      );
       console.log(`   Попробуйте mine ещё раз`);
       return;
     }
 
-    const rewardTx = block.transactions.find(tx => tx.from === "SYSTEM");
+    const rewardTx = block.transactions.find((tx) => tx.from === "SYSTEM");
     const reward = rewardTx ? rewardTx.amount : 0;
 
     console.log(`   ⛏️ Блок #${block.index} добыт за ${time} секунд!`);
-    console.log(`   Награда: ${reward} монет (${this.blockchain.miningRewardPercent}% от массы, макс ${this.blockchain.maxMiningReward})`);
+    console.log(
+      `   Награда: ${reward} монет (${this.blockchain.miningRewardPercent}% от массы, макс ${this.blockchain.maxMiningReward})`,
+    );
     console.log(`   Nonce: ${block.nonce}`);
     console.log(`   Хеш: ${block.hash.substring(0, 20)}...`);
 

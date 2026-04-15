@@ -58,15 +58,20 @@ function selectMenu(title, items) {
         if (key[2] === 65) selected = Math.max(0, selected - 1); // вверх
         if (key[2] === 66) selected = Math.min(items.length - 1, selected + 1); // вниз
         render();
-      } else if (key[0] === 13) { // Enter
+      } else if (key[0] === 13) {
+        // Enter
         process.stdin.setRawMode(false);
         process.stdin.removeListener("data", onKey);
         process.stdout.write("\x1B[?25h"); // показать курсор
         // Пересоздаём readline после raw mode
         rl.close();
-        rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
         resolve(selected);
-      } else if (key[0] === 3) { // Ctrl+C
+      } else if (key[0] === 3) {
+        // Ctrl+C
         process.stdout.write("\x1B[?25h");
         process.exit(0);
       }
@@ -111,15 +116,18 @@ async function loadFromPath() {
 
   if (stat.isDirectory()) {
     // Указали папку — ищем кошельки
-    const wallets = fs.readdirSync(trimmed)
-      .filter(f => f.startsWith("wallet_") && f.endsWith(".json"));
+    const wallets = fs
+      .readdirSync(trimmed)
+      .filter((f) => f.startsWith("wallet_") && f.endsWith(".json"));
 
     if (wallets.length === 0) {
       console.log("❌ Кошельки не найдены в этой папке");
       return null;
     }
 
-    const names = wallets.map(f => f.replace("wallet_", "").replace(".json", ""));
+    const names = wallets.map((f) =>
+      f.replace("wallet_", "").replace(".json", ""),
+    );
     const idx = await selectMenu(`\n📂 Кошельки в ${trimmed}:`, names);
     const filePath = path.join(trimmed, wallets[idx]);
     const wallet = validateWallet(filePath);
