@@ -4,9 +4,7 @@ const WebSocket = require("ws");
 const readline = require("readline");
 const fs = require("fs");
 
-const CLIENT_VERSION = JSON.parse(
-  fs.readFileSync(require("path").join(__dirname, "package.json"), "utf8"),
-).version;
+const CLIENT_VERSION = require("./package.json").version;
 
 class User {
   constructor(name, serverUrl = "ws://155.212.227.116:8088", walletPath = null) {
