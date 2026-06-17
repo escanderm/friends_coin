@@ -9,7 +9,7 @@ const CLIENT_VERSION = JSON.parse(
 ).version;
 
 class User {
-  constructor(name, serverUrl = "ws://159.194.219.91:8088", walletPath = null) {
+  constructor(name, serverUrl = "ws://155.212.227.116:8088", walletPath = null) {
     this.name = name;
     this.serverUrl = serverUrl;
     this.walletPath = walletPath;
