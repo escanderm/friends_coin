@@ -7,7 +7,7 @@ const fs = require("fs");
 const CLIENT_VERSION = require("./package.json").version;
 
 class User {
-  constructor(name, serverUrl = "ws://155.212.227.116:8088", walletPath = null) {
+  constructor(name, serverUrl = "ws://ams.ooomista.ru:8088", walletPath = null) {
     this.name = name;
     this.serverUrl = serverUrl;
     this.walletPath = walletPath;
