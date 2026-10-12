@@ -1,13 +1,25 @@
 {
   "name": "friendcoin",
-  "version": "1.1.11",
+  "version": "2.0.0-rc.1",
   "description": "Криптовалюта для друзей",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "client": "node start.js"
+    "client": "node start.js",
+    "test": "node --test tests/*.test.js",
+    "test:release": "node --test scripts/release-publisher.test.js",
+    "build": "node scripts/build.js",
+    "build:smoke": "node scripts/smoke-build.js",
+    "build:e2e": "node scripts/smoke-network.js"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "dependencies": {
-    "ws": "^8.14.2"
+    "ws": "8.20.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6"
   }
 }

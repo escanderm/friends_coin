@@ -1,8 +1,12 @@
 # Зависимости
 node_modules/
 
+# Локальный адрес сервера
+friendcoin.config.json
+
 # Личные кошельки
 wallet_*.json
+*.fcwallet
 
 # Личные блокчейны
 blockchain_*.json
@@ -14,13 +18,15 @@ address_book_*.json
 blockchain_backup.json
 pending_backup.json
 users.json
-server.js
 admin.js
-deploy.sh
 logs.sh
 
 # Бинарники
 builds/
+dist/
+friendcoin-data/
+testnet-server/
+testnet-client/
 friendcoin-mac
 sea-config.json
 
