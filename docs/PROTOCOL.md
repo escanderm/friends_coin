@@ -20,7 +20,7 @@ Confirmations count blocks above a transfer's block including that block. Ordina
 
 Clients announce protocol version, network ID and genesis hash. Application versions can differ while protocol rules match. The relay challenges each connection; the wallet proves possession of its key with a separate identity-signing domain. Nicknames are labels, not global ownership claims. Confirm a recipient's full address with its holder.
 
-Messages announce tips, transfer transactions/blocks, and request/reply to bounded block and pool batches. Relays assign source peer IDs and reject client attempts to spoof them. Clients validate peer identity proofs and every received ledger object themselves. Sync follows the last validated block on a remote branch across batches, even before that branch becomes the selected tip.
+Messages announce tips, transfer transactions/blocks, and request/reply to bounded block and pool batches. A block reply contains at most 16 blocks and fits within the one-MiB frame budget, reserving space for the relay's sender ID. Filled blocks may require a shorter reply; synchronization continues from its last validated hash until the advertised tip is known. Relays assign source peer IDs and reject client attempts to spoof them. Clients validate peer identity proofs and every received ledger object themselves. Sync follows the last validated block on a remote branch across batches, even before that branch becomes the selected tip.
 
 Multiple relay connections share one ledger and pool. IDs/hashes deduplicate messages. Connections retry with bounded backoff, and mining cancels when the selected parent changes or connectivity is lost.
 

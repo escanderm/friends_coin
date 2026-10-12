@@ -23,9 +23,15 @@ The candidate issues 1.00 FC per block, until total issuance including the 2554.
 
 Testnet is a separate network with no mainnet allocations and easy mining. Its coins do not affect existing balances.
 
+## Candidate validation
+
+Candidate commit `2be95ce` passed the [GitHub CI run](https://github.com/escanderm/friends_coin/actions/runs/38317221105): source tests on Node.js 22 and native client builds on macOS arm64, macOS x64, Linux x64, and Windows x64. Each native target passed the source and publisher tests, binary smoke checks, and `npm run build:e2e`.
+
+The compiled client testnet workflow opens a synthetic encrypted wallet without echoing its password, mines a block, sends and confirms a signed transfer, checks the recipient balance and shared chain tip, then restarts the client and verifies persisted height and balance. It also verifies that the wallet file is unchanged. These checks use temporary directories and a local testnet server; they do not migrate production or publish a release.
+
 ## Activation procedure
 
-1. Finish the CI builds and download checksums for every supported platform. Run the testnet transfer, mining, restart, import and recovery checks with synthetic wallets.
+1. Download the tagged client release and checksums for every supported platform when it is published, and verify the files. The candidate builds and compiled transfer, mining and restart checks have passed CI. Before cutover, also test installation, legacy import and recovery with synthetic wallets in the intended deployment environment.
 2. Agree on the monetary rules, checkpoint and cutover with the holders. Confirm the v1 tip and balances still match the checkpoint.
 3. Stop v1 mining and transactions for the cutover. Back up the existing server code, configuration and all three v1 data files off the server. Each holder backs up their own wallet; private keys do not belong on the relay or in GitHub.
 4. Preserve the old deployment and its data. Install v2 into a separate directory and data volume. Do not point it at the v1 JSON files.
@@ -37,6 +43,8 @@ The repository does not perform these production steps automatically. The existi
 ## Server container
 
 The Dockerfile runs as the Node image's unprivileged `node` user. Prepare a dedicated writable `/data` mount owned by that user (UID/GID 1000 in this image). Keep the HTTP download and WebSocket ports distinct from other services on the host. The current v1 server uses ports 8088/8089; activation must resolve that conflict deliberately.
+
+The separate Container CI workflow builds the server image and checks an unprivileged read-only runtime, loopback HTTP/WebSocket endpoints, transfer/block acceptance and recovery after restarting the same data volume. It uses synthetic keys and a fresh client for the recovery check. Check this workflow's result separately from the successful client run above.
 
 Use `--relay-only` for a transport with no persisted ledger. The default archive independently checks and stores a copy, serves historical blocks, and has no minting or privileged consensus role.
 
@@ -50,4 +58,4 @@ Restarting the old deployment is a rollback only before v2 transfers begin. Once
 
 ## Remaining release constraints
 
-CI must validate all four target binaries. Local validation is macOS ARM64. Developer ID / Windows Authenticode signing is not configured; checksums do not replace platform signing. Gatekeeper or SmartScreen may require the user to approve a downloaded executable. A public deployment needs WSS/TLS, monitoring and backups. Small PoW networks have limited resistance to hash-power attacks; independent review is still needed before relying on this network for meaningful external payments.
+The four target binaries have passed build, smoke and compiled client testnet checks in GitHub CI; local validation also covers macOS arm64. A tagged release still requires its publication workflow, and the Docker checks run separately. Developer ID / Windows Authenticode signing is not configured; checksums do not replace platform signing. Gatekeeper or SmartScreen may require the user to approve a downloaded executable. A public deployment needs WSS/TLS, monitoring and backups. Small PoW networks have limited resistance to hash-power attacks; independent review is still needed before relying on this network for meaningful external payments.

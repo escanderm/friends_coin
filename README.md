@@ -98,7 +98,7 @@ npm run build:smoke
 - `friendcoin-linux-x64`
 - `friendcoin-windows-x64.exe`
 
-These files include the Node.js runtime, so users do not need to install Node.js. Download the matching executable and checksum from the repository's GitHub Releases after a release has been published. The tagged release workflow builds and checks all four targets. No published version 2 release is implied by the presence of this workflow.
+These files include the Node.js runtime, so users do not need to install Node.js. Download the matching executable and checksum from [GitHub Releases](https://github.com/escanderm/friends_coin/releases). The tagged release workflow builds and checks all four targets before publishing a complete set of downloads.
 
 Example on macOS or Linux:
 
@@ -124,6 +124,6 @@ npm test
 npm run test:release
 ```
 
-CI runs tests and builds on macOS arm64, macOS x64, Linux x64, and Windows x64. Binary smoke checks verify the checksum, `--version`, `--help`, and exit from the empty wallet menu in a temporary data directory.
+CI runs tests and builds on macOS arm64, macOS x64, Linux x64, and Windows x64. Binary smoke checks verify the checksum, `--version`, `--help`, and exit from the empty wallet menu in a temporary data directory. `npm run build:e2e` then runs the compiled client with a temporary encrypted wallet, mines coins, confirms a transfer to a second client, and checks the same balance after restarting the executable.
 
 See [docs/RELEASE.md](docs/RELEASE.md) for tag naming, GitHub publication, signing limits, and the migration checklist. Passing CI verifies the tested behavior; it does not certify the currency for handling valuable funds.

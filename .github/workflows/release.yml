@@ -12,6 +12,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  container:
+    name: Test Docker server
+    uses: ./.github/workflows/container.yml
+
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -42,6 +46,7 @@ jobs:
           architecture: ${{ matrix.arch }}
           cache: npm
       - run: node scripts/check-release-tag.js
+      - run: node scripts/check-version.js
       - run: npm ci
       - run: npm test
       - run: npm run test:release
@@ -56,7 +61,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: build
+    needs: [build, container]
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     permissions:

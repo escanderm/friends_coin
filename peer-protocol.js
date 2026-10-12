@@ -58,4 +58,37 @@ function tipOf(blockchain) {
   return { hash: block.hash, height: block.height, chainwork: blockchain.getChainwork() };
 }
 
-module.exports = { PROTOCOL_VERSION, MAX_PAYLOAD, MESSAGE_TYPES, NAME_PATTERN, identityBytes, signIdentity, verifyIdentity, parseMessage, validatePeerMessage, tipOf };
+function boundedBlocksMessage(fields, blocks) {
+  if (!fields || typeof fields !== "object" || Array.isArray(fields) || !Array.isArray(blocks)) {
+    throw new Error("Неверные поля ответа blocks");
+  }
+  const message = { ...fields, type: "blocks", blocks: [] };
+  // Reserve room for the relay's authenticated `from` envelope. Empty array
+  // brackets are already included; each block adds its JSON bytes and a comma.
+  const limit = MAX_PAYLOAD - 256;
+  let bytes = Buffer.byteLength(JSON.stringify(message), "utf8");
+  if (bytes > limit) {
+    const error = new Error("Поля ответа blocks превышают лимит сообщения");
+    error.code = "MESSAGE_TOO_LARGE";
+    throw error;
+  }
+  for (const block of blocks.slice(0, 16)) {
+    if (!block || typeof block !== "object" || Array.isArray(block)) throw new Error("Неверный блок в ответе");
+    const encoded = JSON.stringify(block);
+    if (typeof encoded !== "string") throw new Error("Блок не сериализуется в JSON");
+    const added = Buffer.byteLength(encoded, "utf8") + (message.blocks.length ? 1 : 0);
+    if (bytes + added > limit) {
+      if (message.blocks.length === 0) {
+        const error = new Error("Первый блок превышает лимит ответа синхронизации");
+        error.code = "BLOCK_TOO_LARGE";
+        throw error;
+      }
+      break;
+    }
+    message.blocks.push(block);
+    bytes += added;
+  }
+  return message;
+}
+
+module.exports = { PROTOCOL_VERSION, MAX_PAYLOAD, MESSAGE_TYPES, NAME_PATTERN, identityBytes, signIdentity, verifyIdentity, parseMessage, validatePeerMessage, tipOf, boundedBlocksMessage };

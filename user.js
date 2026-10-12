@@ -8,7 +8,7 @@ const { getNetwork } = require("./network-config");
 const { ChainStore } = require("./storage");
 const { resolveServerConfig, validateServerUrl } = require("./server-config");
 const { parseAmountUnits, formatAmountUnits, isAddress, transactionId } = require("./protocol");
-const { PROTOCOL_VERSION, parseMessage, signIdentity, verifyIdentity, validatePeerMessage, tipOf } = require("./peer-protocol");
+const { PROTOCOL_VERSION, parseMessage, signIdentity, verifyIdentity, validatePeerMessage, tipOf, boundedBlocksMessage } = require("./peer-protocol");
 const { version } = require("./package.json");
 
 class User extends EventEmitter {
@@ -225,7 +225,7 @@ class User extends EventEmitter {
         if (message.from !== connection.id && message.tip?.hash !== this.blockchain.getLastBlock().hash) this._request(url, message.from, "blocks");
         break;
       case "request_blocks":
-        this._send(url, { type: "blocks", to: message.from, requestId: message.requestId, blocks: this.blockchain.getBlocksAfter(message.locator, message.limit), tip: tipOf(this.blockchain) });
+        this._send(url, boundedBlocksMessage({ to: message.from, requestId: message.requestId, tip: tipOf(this.blockchain) }, this.blockchain.getBlocksAfter(message.locator, message.limit)));
         break;
       case "request_pool":
         this._send(url, { type: "pool", to: message.from, requestId: message.requestId, transactions: this.blockchain.pendingTransactions.slice(0, 100), tip: tipOf(this.blockchain) });
@@ -245,7 +245,7 @@ class User extends EventEmitter {
         }
         if (accepted) this._announce();
         const lastHash = lastVerifiedHash;
-        if (lastHash && message.blocks.length === 16 && lastHash !== request.locator[0] && message.tip?.hash !== lastHash) {
+        if (lastHash && lastHash !== request.locator[0] && message.tip?.hash !== lastHash && !this.blockchain.hasBlock(message.tip?.hash)) {
           this._request(url, message.from, "blocks", [lastHash, ...this.blockchain.getLocator()].slice(0, 64));
         } else {
           this._request(url, message.from, "pool");
