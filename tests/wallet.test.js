@@ -270,6 +270,7 @@ test("save requires a password, rejects inconsistent keys, and defaults to .fcwa
     assert.throws(() => alice.save(), /Пароль/);
     assert.throws(() => new Wallet("Empty").save(PASSWORD), /создайте|разблокируйте/);
     assert.throws(() => new Wallet("../unsafe"), /Неверное имя/);
+    assert.throws(() => new Wallet("\u009b31mspoof"), /Неверное имя/);
     const inconsistent = new Wallet("Broken");
     inconsistent.address = alice.address;
     inconsistent.keys = { publicKey: alice.keys.publicKey, privateKey: bob.keys.privateKey };

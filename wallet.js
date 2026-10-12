@@ -21,7 +21,7 @@ function validName(name) {
     typeof name !== "string" ||
     !name.trim() ||
     Buffer.byteLength(name, "utf8") > 128 ||
-    /[\\/<>:"|?*\x00-\x1f\x7f]/.test(name) ||
+    /[\\/<>:"|?*\x00-\x1f\x7f-\x9f]/.test(name) ||
     name === "." || name === ".."
   ) {
     throw new Error("Неверное имя кошелька: укажите имя без путей и управляющих символов");

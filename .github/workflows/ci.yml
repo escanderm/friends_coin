@@ -43,6 +43,7 @@ jobs:
           architecture: ${{ matrix.arch }}
           cache: npm
       - run: npm ci
+      - run: node scripts/check-version.js
       - run: npm test
       - run: npm run test:release
       - run: npm run build
@@ -68,5 +69,6 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - run: node scripts/check-version.js
       - run: npm test
       - run: npm run test:release

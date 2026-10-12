@@ -9,7 +9,7 @@ const { ChainStore } = require("./storage");
 const { getNetwork } = require("./network-config");
 const { parseArguments, resolveDataDirectory, portNumber } = require("./cli");
 const {
-  PROTOCOL_VERSION, MAX_PAYLOAD, verifyIdentity, parseMessage, validatePeerMessage, tipOf,
+  PROTOCOL_VERSION, MAX_PAYLOAD, verifyIdentity, parseMessage, validatePeerMessage, tipOf, boundedBlocksMessage,
 } = require("./peer-protocol");
 
 const SERVER_VERSION = require("./package.json").version;
@@ -210,8 +210,8 @@ async function createServer({
   }
   function archiveMessage(peer, message) {
     if (message.type === "request_blocks") {
-      send(peer.ws, { type: "blocks", from: "archive", to: peer.id, requestId: message.requestId,
-        blocks: ledger.getBlocksAfter(message.locator, Math.min(message.limit, 16)), tip: tipOf(ledger) });
+      send(peer.ws, boundedBlocksMessage({ from: "archive", to: peer.id, requestId: message.requestId, tip: tipOf(ledger) },
+        ledger.getBlocksAfter(message.locator, Math.min(message.limit, 16))));
     } else if (message.type === "request_pool") {
       send(peer.ws, { type: "pool", from: "archive", to: peer.id, requestId: message.requestId,
         transactions: ledger.pendingTransactions.slice(0, 100).map(tx => tx.toJSON()), tip: tipOf(ledger) });
