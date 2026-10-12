@@ -1,0 +1,34 @@
+{
+  "networkId": "friendcoin-mainnet-v2",
+  "protocolVersion": 2,
+  "decimals": 2,
+  "blockRewardUnits": 100,
+  "maxSupplyUnits": 100000000,
+  "minFeeUnits": 1,
+  "maxTransactionsPerBlock": 100,
+  "targetBlockTime": 600,
+  "adjustmentInterval": 50,
+  "initialTarget": "00000007ffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "maxTarget": "0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "genesis": {
+    "timestamp": 1791843447000,
+    "allocations": [
+      {
+        "address": "FC2_3f72cc90512deaba6913afbbdcace882494c13f605e2648b7d6d9664532a92c5_b77e82cd",
+        "amountUnits": 200000
+      },
+      {
+        "address": "FC2_600bbe0fcf76b724489008eb5999f1efb67d6c0752b61652e915dc69b9b1218c_442d97a1",
+        "amountUnits": 200
+      },
+      {
+        "address": "FC2_6ea6b18333bc10a21091767d8f73fef7f7cb2261d858d16f047817a0b57cf373_f60cd811",
+        "amountUnits": 55200
+      }
+    ],
+    "legacyCheckpoint": {
+      "height": 111,
+      "hash": "000000049271b8befbf853187e22b401cc192dbbaf476d0e332c481a4b72a7fb"
+    }
+  }
+}

@@ -1,596 +1,358 @@
+const EventEmitter = require("events");
+const path = require("path");
+const crypto = require("crypto");
+const WebSocket = require("ws");
 const { Blockchain, Transaction } = require("./blockchain");
 const { Wallet } = require("./wallet");
-const WebSocket = require("ws");
-const readline = require("readline");
-const fs = require("fs");
+const { getNetwork } = require("./network-config");
+const { ChainStore } = require("./storage");
+const { resolveServerConfig, validateServerUrl } = require("./server-config");
+const { parseAmountUnits, formatAmountUnits, isAddress, transactionId } = require("./protocol");
+const { PROTOCOL_VERSION, parseMessage, signIdentity, verifyIdentity, validatePeerMessage, tipOf } = require("./peer-protocol");
+const { version } = require("./package.json");
 
-const CLIENT_VERSION = require("./package.json").version;
-
-class User {
-  constructor(name, serverUrl = "ws://155.212.227.116:8088", walletPath = null) {
+class User extends EventEmitter {
+  constructor(name, serverUrl = null, walletPath = null, options = {}) {
+    super();
     this.name = name;
-    this.serverUrl = serverUrl;
+    const configured = serverUrl === null ? resolveServerConfig({ argv: [], cwd: options.dataDir || process.cwd() }).serverUrl : serverUrl;
+    if (!configured) throw new Error("Адрес сервера не настроен. Используйте --server ws://адрес:8088");
+    this.serverUrl = validateServerUrl(configured);
+    this.serverUrls = [...new Set([this.serverUrl, ...(options.relays || []).map(validateServerUrl)])];
     this.walletPath = walletPath;
+    this.wallet = options.wallet || null;
+    this.network = options.network || getNetwork("mainnet");
+    this.blockchain = new Blockchain(this.network);
+    this.options = options;
+    this.dataDir = path.resolve(options.dataDir || "friendcoin-data");
+    this.store = null;
     this.ws = null;
-    this.wallet = null;
-    this.blockchain = null;
     this.ready = false;
-    this.addressBook = {};
-    this.rl = null;
+    this.peers = new Map();
+    this.connections = new Map();
+    this.requests = new Map();
+    this.retries = new Map();
+    this.closing = false;
+    this.storageFailed = false;
+    this.mining = null;
+    this.sweep = null;
+    this.log = options.logger || (message => console.log(String(message).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "").slice(0, 2000)));
   }
 
-  loadLocalBlockchain() {
+  async init({ password, restoreBackup = false } = {}) {
+    if (!this.wallet) {
+      if (!this.walletPath) throw new Error("Сначала выберите или создайте кошелёк");
+      this.wallet = new Wallet(this.name);
+      this.wallet.load(this.walletPath, password);
+    }
+    this.name = this.wallet.name;
+    this.store = new ChainStore(path.join(this.dataDir, this.network.networkId));
+    this.store.acquire();
     try {
-      const data = fs.readFileSync(`blockchain_${this.name}.json`, "utf8");
-      const saved = JSON.parse(data);
-      this.blockchain = new Blockchain();
-      this.blockchain.chain = saved.chain;
-      this.blockchain.pendingTransactions = saved.pendingTransactions || [];
-      console.log(
-        `📂 Загружен локальный блокчейн: ${this.blockchain.chain.length} блоков`,
-      );
-      if (this.blockchain.chain.length > 0) {
-        console.log(
-          `   Последний блок #${this.blockchain.getLastBlock().index}`,
-        );
+      this.store.load(this.blockchain, { restoreBackup });
+      this.store.save(this.blockchain);
+    } catch (error) { this.store.release(); this.store = null; throw error; }
+    this.sweep = setInterval(() => {
+      for (const [id, request] of this.requests) if (request.expires < Date.now()) this.requests.delete(id);
+      this._updateReady();
+    }, 1000);
+    this.sweep.unref();
+    await this.connect();
+    return this;
+  }
+
+  _updateReady() {
+    const connected = [...this.connections.values()].some(connection => connection.identified);
+    const synchronizing = [...this.requests.values()].some(request => request.type === "blocks");
+    const wasReady = this.ready;
+    this.ready = connected && !synchronizing && !this.storageFailed && !this.closing;
+    if (this.ready && !wasReady) this.emit("ready");
+  }
+
+  async connect() {
+    if ([...this.connections.values()].some(connection => connection.identified)) return;
+    const promise = new Promise((resolve, reject) => {
+      const onConnected = () => { clearTimeout(timeout); resolve(); };
+      const timeout = setTimeout(() => {
+        this.removeListener("connected", onConnected);
+        reject(new Error("Сервер не ответил по протоколу 2. Проверьте адрес и совместимость версии"));
+      }, this.options.connectTimeout || 6000);
+      this.once("connected", onConnected);
+    });
+    for (const url of this.serverUrls) this._open(url);
+    return promise;
+  }
+
+  _open(url) {
+    if (this.closing) return;
+    const previous = this.connections.get(url);
+    if (previous && previous.socket.readyState <= WebSocket.OPEN) return;
+    const socket = new WebSocket(url, { handshakeTimeout: 5000, maxPayload: 1024 * 1024, perMessageDeflate: false });
+    const connection = { socket, id: null, identified: false, phase: "hello", handshake: null };
+    this.connections.set(url, connection);
+    if (!this.ws) this.ws = socket;
+    connection.handshake = setTimeout(() => {
+      if (!connection.identified) socket.terminate();
+    }, 5000);
+    socket.on("open", () => {
+      this._send(url, { type: "hello", protocolVersion: PROTOCOL_VERSION, clientVersion: version, networkId: this.network.networkId, genesisHash: this.blockchain.chain[0].hash });
+    });
+    socket.on("message", data => {
+      try { this._handle(url, parseMessage(data)); }
+      catch (error) {
+        this.log("Отклонено сообщение: " + error.message);
+        if (!connection.identified) socket.close(1008, "Invalid handshake");
       }
+    });
+    socket.on("error", error => this.log("Подключение " + url + ": " + error.message));
+    socket.on("close", () => {
+      clearTimeout(connection.handshake);
+      if (this.connections.get(url) !== connection) return;
+      this.connections.delete(url);
+      if (this.ws === socket) this.ws = [...this.connections.values()][0]?.socket || null;
+      for (const [key, peer] of this.peers) if (peer.url === url) this.peers.delete(key);
+      for (const [id, request] of this.requests) if (request.url === url) this.requests.delete(id);
+      this._updateReady();
+      if (!this.ready && this.mining) this.mining.abort();
+      this.emit("disconnected", url);
+      if (!this.closing && this.options.reconnect !== false) {
+        const retry = this.retries.get(url) || { attempt: 0, timer: null };
+        retry.attempt++;
+        retry.timer = setTimeout(() => this._open(url), Math.min(30000, 1000 * 2 ** Math.min(5, retry.attempt - 1)));
+        this.retries.set(url, retry);
+      }
+    });
+  }
+
+  _send(url, message) {
+    const connection = this.connections.get(url);
+    if (connection && connection.socket.readyState === WebSocket.OPEN) {
+      connection.socket.send(JSON.stringify(message));
       return true;
-    } catch (e) {
-      console.log("📂 Локального блокчейна нет");
-      return false;
+    }
+    return false;
+  }
+
+  _broadcast(message, excludedUrl = null) {
+    for (const [url, connection] of this.connections) {
+      if (connection.identified && url !== excludedUrl) this._send(url, message);
     }
   }
 
-  saveLocalBlockchain() {
-    if (this.blockchain) {
-      const data = JSON.stringify(
-        {
-          chain: this.blockchain.chain,
-          pendingTransactions: this.blockchain.pendingTransactions,
-        },
-        null,
-        2,
-      );
-      fs.writeFileSync(`blockchain_${this.name}.json`, data);
-    }
-  }
-
-  loadAddressBook() {
-    try {
-      const data = fs.readFileSync(`address_book_${this.name}.json`, "utf8");
-      this.addressBook = JSON.parse(data);
-      const count = Object.keys(this.addressBook).length;
-      if (count > 0) {
-        console.log(`📖 Адресная книга загружена (${count} контактов)`);
-      } else {
-        console.log("📖 Адресная книга пуста");
-      }
-    } catch (e) {
-      console.log("📖 Адресная книга пуста");
-    }
-  }
-
-  saveAddressBook() {
-    fs.writeFileSync(
-      `address_book_${this.name}.json`,
-      JSON.stringify(this.addressBook, null, 2),
-    );
-  }
-
-  loadWallet() {
-    this.wallet = new Wallet(this.name);
-    if (!this.wallet.load(this.walletPath)) {
-      this.wallet.generate();
-      this.wallet.save();
-      console.log(`\n✅ Создан новый кошелёк для ${this.name}`);
-      console.log(`🔐 Публичный ключ (адрес):`);
-      console.log(`${this.wallet.address.substring(0, 80)}...`);
-      console.log(`\n🔑 Приватный ключ (НЕ ПОКАЗЫВАЙТЕ НИКОМУ):`);
-      console.log(`   ${this.wallet.keys.privateKey.substring(0, 80)}...`);
-      console.log(`\n⚠️  Сохраните приватный ключ в надёжном месте!`);
-    } else {
-      this.name = this.wallet.name;
-      console.log(`\n📂 Загружен кошелёк ${this.name}`);
-    }
-    console.log(`📍 Короткий адрес: ${this.wallet.getShortAddress()}\n`);
-  }
-
-  connect() {
-    this.ws = new WebSocket(this.serverUrl);
-
-    this.ws.on("open", () => {
-      console.log(`🔌 Подключен к серверу`);
-      this.ws.send(
-        JSON.stringify({
-          type: "register",
-          name: this.name,
-          address: this.wallet.address,
-          version: CLIENT_VERSION,
-        }),
-      );
-    });
-
-    this.ws.on("message", (data) => {
-      const msg = JSON.parse(data);
-      this.handleMessage(msg);
-    });
-
-    this.ws.on("error", (err) => {
-      console.error("❌ Ошибка подключения:", err.message);
-    });
-
-    this.ws.on("close", () => {
-      console.log("🔌 Отключён от сервера");
-    });
-  }
-
-  handleMessage(msg) {
-    switch (msg.type) {
-      case "sync":
-        this.handleSync(msg);
-        break;
-      case "update_users":
-        this.handleUpdateUsers(msg);
-        break;
-      case "new_transaction":
-        this.handleNewTransaction(msg);
-        break;
-      case "new_block":
-        this.handleNewBlock(msg);
-        break;
-      case "force_sync":
-        this.handleForceSync(msg);
-        break;
-      case "pending_update":
-        this.handlePendingUpdate(msg);
-        break;
-      case "request_sync":
-        this.handleSync(msg);
-        break;
-      case "update_required":
-        console.log(`\n${"=".repeat(50)}`);
-        console.log(`   ${msg.message}`);
-        console.log(`${"=".repeat(50)}\n`);
-        this.ws.close();
-        if (this.rl) this.rl.close();
-        process.exit(1);
-        break;
-    }
-  }
-
-  handleSync(msg) {
-    console.log(`\n🔄 Синхронизация с сервером...`);
-    console.log(`   Сервер прислал ${msg.chain.length} блоков`);
-
-    const remoteChain = new Blockchain();
-    remoteChain.chain = msg.chain;
-    remoteChain.pendingTransactions = msg.pendingBackup || [];
-
-    let needSubmit = false;
-
-    if (
-      !this.blockchain ||
-      this.blockchain.chain.length < remoteChain.chain.length
-    ) {
-      this.blockchain = remoteChain;
-      this.saveLocalBlockchain();
-      console.log(
-        `   ✅ Используем цепочку сервера (${this.blockchain.chain.length} блоков)`,
-      );
-    } else if (this.blockchain.chain.length > remoteChain.chain.length) {
-      console.log(
-        `   📤 У меня цепочка длиннее (${this.blockchain.chain.length} > ${remoteChain.chain.length})`,
-      );
-      console.log(
-        `   📤 Отправляю свою цепочку на сервер для восстановления...`,
-      );
-      needSubmit = true;
-    } else {
-      // Одинаковая длина — проверяем хеш последнего блока
-      const localHash = this.blockchain.getLastBlock().hash;
-      const remoteHash = remoteChain.getLastBlock().hash;
-      if (localHash !== remoteHash) {
-        console.log(`   ⚠️ Цепочки расходятся! Принимаю версию сервера.`);
-        this.blockchain = remoteChain;
-        this.saveLocalBlockchain();
-      } else {
-        console.log(
-          `   ✅ Цепочки одинаковой длины (${this.blockchain.chain.length} блоков)`,
-        );
+  _save() {
+    if (this.store) {
+      try { this.store.save(this.blockchain); }
+      catch (error) {
+        this.storageFailed = true;
+        this.ready = false;
+        this.stopMining();
+        this.emit("storageError", error);
+        throw error;
       }
     }
+    this.emit("state", tipOf(this.blockchain));
+  }
 
-    console.log(
-      `   📦 В пуле ${this.blockchain.pendingTransactions.length} транзакций`,
-    );
+  _announce() { this._broadcast({ type: "announce", tip: tipOf(this.blockchain) }); }
 
-    if (msg.users) {
-      this.addressBook = msg.users;
-      this.saveAddressBook();
-      const friends = Object.keys(this.addressBook).filter(
-        (n) => n !== this.name,
-      );
-      console.log(`📖 Загружена адресная книга: ${friends.length} друзей`);
-      if (friends.length > 0) {
-        console.log(`   ${friends.join(", ")}`);
-      }
+  _request(url, peerId, type, locator = null) {
+    if ([...this.requests.values()].some(request => request.url === url && request.peerId === peerId && request.type === type)) return;
+    if (this.requests.size >= 128) return;
+    const requestId = crypto.randomUUID();
+    const selectedLocator = locator || this.blockchain.getLocator();
+    this.requests.set(requestId, { url, peerId, type, locator: selectedLocator, expires: Date.now() + 10000 });
+    const message = type === "blocks"
+      ? { type: "request_blocks", to: peerId, requestId, locator: selectedLocator, limit: 16 }
+      : { type: "request_pool", to: peerId, requestId };
+    if (!this._send(url, message)) this.requests.delete(requestId);
+    this._updateReady();
+  }
+
+  _updatePeers(url, peers) {
+    if (!Array.isArray(peers) || peers.length > 129) throw new Error("Неверный список узлов");
+    const connection = this.connections.get(url);
+    for (const [key, peer] of this.peers) if (peer.url === url) this.peers.delete(key);
+    for (const peer of peers) {
+      if (!peer || typeof peer.id !== "string" || peer.id.length > 100 || peer.id === connection.id) continue;
+      if (peer.archive === true) {
+        if (peer.id !== "archive" || peer.identity !== undefined || peer.challenge !== undefined) continue;
+      } else if (!verifyIdentity(peer.identity, this.network.networkId, peer.challenge)) continue;
+      this.peers.set(url + "|" + peer.id, { ...peer, url });
+      if (peer.tip && peer.tip.hash !== this.blockchain.getLastBlock().hash) this._request(url, peer.id, "blocks");
     }
+    this.emit("peers", [...this.peers.values()]);
+  }
 
-    this.blockchain.recalculateDifficulty();
-    this.ready = true;
-    this.showBalance();
-    console.log(`⛏️  Сложность майнинга: ${this.blockchain.difficulty}`);
-
-    if (needSubmit) {
-      this.ws.send(
-        JSON.stringify({
-          type: "submit_chain",
-          chain: this.blockchain.chain,
-          pendingTransactions: this.blockchain.pendingTransactions,
-        }),
-      );
+  _handle(url, message) {
+    const connection = this.connections.get(url);
+    if (!connection) return;
+    if (message.type === "welcome") {
+      if (connection.phase !== "hello") throw new Error("Повторное приветствие сервера");
+      if (message.protocolVersion !== PROTOCOL_VERSION || message.networkId !== this.network.networkId || message.genesisHash !== this.blockchain.chain[0].hash || typeof message.challenge !== "string" || !/^(?:[a-f0-9]{64}|[A-Za-z0-9_-]{43})$/.test(message.challenge) || typeof message.peerId !== "string") throw new Error("Несовместимый сервер");
+      connection.id = message.peerId;
+      connection.phase = "identify";
+      this._send(url, { type: "identify", identity: signIdentity(this.wallet, this.network.networkId, message.challenge) });
+      return;
     }
-  }
-
-  handlePendingUpdate(msg) {
-    if (!this.blockchain) return;
-    console.log(`\n🔄 Обновление пула транзакций...`);
-    this.blockchain.pendingTransactions = msg.pendingBackup || [];
-    this.saveLocalBlockchain();
-    console.log(
-      `   📦 В пуле ${this.blockchain.pendingTransactions.length} транзакций`,
-    );
-  }
-
-  handleForceSync(msg) {
-    console.log(`\n🔄 Принудительная синхронизация...`);
-    this.blockchain = new Blockchain();
-    this.blockchain.chain = msg.chain;
-    this.blockchain.pendingTransactions = msg.pendingBackup || [];
-    this.saveLocalBlockchain();
-    console.log(`   ✅ Обновлено: ${this.blockchain.chain.length} блоков`);
-    this.showBalance();
-  }
-
-  handleUpdateUsers(msg) {
-    this.addressBook = msg.users;
-    this.saveAddressBook();
-    const friends = Object.keys(this.addressBook).filter(
-      (n) => n !== this.name,
-    );
-    console.log(`\n📖 Обновлена адресная книга: ${friends.length} друзей`);
-    if (friends.length > 0) {
-      console.log(`   ${friends.join(", ")}`);
+    if (message.type === "incompatible") {
+      this.log(message.message || "Несовместимая сеть");
+      connection.socket.close();
+      return;
     }
-  }
-
-  handleNewTransaction(msg) {
-    if (!this.ready) return;
-    const tx = new Transaction(msg.tx.from, msg.tx.to, msg.tx.amount);
-    tx.timestamp = msg.tx.timestamp;
-    tx.signature = msg.tx.signature;
-    if (tx.isValid()) {
-      this.blockchain.pendingTransactions.push(tx);
-      this.saveLocalBlockchain();
-      console.log(`\n📨 Получена транзакция: ${tx.amount} монет`);
-      this.showBalance();
+    if (message.type === "error") { this.log("Сервер: " + message.message); return; }
+    if (message.type === "identified") {
+      if (connection.phase !== "identify" || message.peerId !== connection.id) throw new Error("Неверная регистрация узла");
+      this._updatePeers(url, message.peers);
+      clearTimeout(connection.handshake);
+      connection.identified = true;
+      connection.phase = "identified";
+      const retry = this.retries.get(url);
+      if (retry?.timer) clearTimeout(retry.timer);
+      this.retries.delete(url);
+      this._announce();
+      for (const peer of this.peers.values()) if (peer.url === url) this._request(url, peer.id, "pool");
+      this._updateReady();
+      this.log("Подключено: " + url + " | " + this.network.networkId);
+      this.emit("connected", url);
+      return;
     }
-  }
-
-  handleNewBlock(msg) {
-    if (!this.ready) return;
-    const lastBlock = this.blockchain.getLastBlock();
-    if (msg.block.previousHash === lastBlock.hash) {
-      // Проверяем награду за майнинг
-      const rewardTx = msg.block.transactions.find(
-        (tx) => tx.from === "SYSTEM",
-      );
-      if (rewardTx) {
-        const minerAddress = rewardTx.to;
-        const userTxs = msg.block.transactions.filter(
-          (tx) => tx.from !== "SYSTEM",
-        );
-
-        let maxReward;
-        if (userTxs.length === 0) {
-          // Пустой блок
-          maxReward = this.blockchain.emptyBlockReward || 1;
+    if (!connection.identified) throw new Error("Сообщение до регистрации");
+    if (message.type === "peers") { this._updatePeers(url, message.peers); return; }
+    validatePeerMessage(message);
+    if (typeof message.from !== "string") throw new Error("Неизвестный отправитель");
+    switch (message.type) {
+      case "announce":
+        if (message.from !== connection.id && message.tip?.hash !== this.blockchain.getLastBlock().hash) this._request(url, message.from, "blocks");
+        break;
+      case "request_blocks":
+        this._send(url, { type: "blocks", to: message.from, requestId: message.requestId, blocks: this.blockchain.getBlocksAfter(message.locator, message.limit), tip: tipOf(this.blockchain) });
+        break;
+      case "request_pool":
+        this._send(url, { type: "pool", to: message.from, requestId: message.requestId, transactions: this.blockchain.pendingTransactions.slice(0, 100), tip: tipOf(this.blockchain) });
+        break;
+      case "blocks": {
+        const request = this.requests.get(message.requestId);
+        if (!request || request.url !== url || request.peerId !== message.from || request.type !== "blocks") return;
+        this.requests.delete(message.requestId);
+        let accepted = false;
+        let lastVerifiedHash = null;
+        for (const block of message.blocks) {
+          const result = this.blockchain.receiveBlock(block);
+          if (result.missingParent) break;
+          lastVerifiedHash = block.hash;
+          accepted = result.accepted || accepted;
+          if (result.accepted) this._save();
+        }
+        if (accepted) this._announce();
+        const lastHash = lastVerifiedHash;
+        if (lastHash && message.blocks.length === 16 && lastHash !== request.locator[0] && message.tip?.hash !== lastHash) {
+          this._request(url, message.from, "blocks", [lastHash, ...this.blockchain.getLocator()].slice(0, 64));
         } else {
-          const otherTxs = userTxs.filter(
-            (tx) => tx.from !== minerAddress && tx.to !== minerAddress,
-          );
-          const txSum = otherTxs.reduce((sum, tx) => sum + tx.amount, 0);
-          maxReward = Math.min(
-            parseFloat(
-              ((txSum * this.blockchain.miningRewardPercent) / 100).toFixed(2),
-            ),
-            this.blockchain.maxMiningReward,
-          );
+          this._request(url, message.from, "pool");
         }
-
-        if (rewardTx.amount > maxReward) {
-          console.log(
-            `\n❌ Блок #${msg.block.index} отклонён: завышенная награда (${rewardTx.amount} > ${maxReward})`,
-          );
-          return;
+        this._updateReady();
+        break;
+      }
+      case "pool": {
+        const request = this.requests.get(message.requestId);
+        if (!request || request.url !== url || request.peerId !== message.from || request.type !== "pool") return;
+        this.requests.delete(message.requestId);
+        for (const transaction of message.transactions) {
+          try { this.blockchain.addTransaction(transaction); } catch { /* Duplicate or incompatible pending transfer. */ }
         }
+        this._save();
+        this._updateReady();
+        break;
       }
-
-      this.blockchain.chain.push(msg.block);
-      const blockSigs = msg.block.transactions.map((tx) => tx.signature);
-      this.blockchain.pendingTransactions =
-        this.blockchain.pendingTransactions.filter(
-          (ptx) => !blockSigs.includes(ptx.signature),
-        );
-      this.saveLocalBlockchain();
-      console.log(`\n📦 Новый блок #${msg.block.index}`);
-      this.showBalance();
-    } else {
-      // Цепочки расходятся — запрашиваем полную синхронизацию
-      console.log(
-        `\n⚠️ Получен блок #${msg.block.index}, но предыдущий хеш не совпадает`,
-      );
-      console.log(
-        `   Мой последний блок: #${lastBlock.index} (${lastBlock.hash.substring(0, 12)}...)`,
-      );
-      console.log(
-        `   Ожидался хеш: ${msg.block.previousHash.substring(0, 12)}...`,
-      );
-      console.log(`   🔄 Запрашиваю полную синхронизацию...`);
-      this.requestSync();
-    }
-  }
-
-  requestSync() {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "request_sync" }));
-    }
-  }
-
-  showBalance() {
-    if (this.ready && this.blockchain) {
-      const balance = this.blockchain.getBalance(this.wallet.address);
-      console.log(`💰 Баланс: ${balance} монет`);
-    }
-  }
-
-  sendCoins(toName, amount) {
-    if (!this.ready) {
-      console.log("⏳ Подождите, идёт синхронизация...");
-      return;
-    }
-
-    if (toName === this.name) {
-      console.log("❌ Нельзя отправлять монеты самому себе!");
-      return;
-    }
-
-    const toAddress = this.addressBook[toName];
-    if (!toAddress) {
-      console.log(`❌ Друг "${toName}" не найден в адресной книге`);
-      const friends = Object.keys(this.addressBook).filter(
-        (n) => n !== this.name,
-      );
-      if (friends.length > 0) {
-        console.log(`   Доступные друзья: ${friends.join(", ")}`);
-      } else {
-        console.log(
-          `   Адресная книга пуста. Подождите, пока друзья подключатся.`,
-        );
+      case "transaction":
+        try {
+          const transaction = this.blockchain.addTransaction(message.transaction);
+          this._save();
+          this._broadcast({ type: "transaction", transaction }, url);
+          this.emit("transaction", transaction);
+        } catch (error) {
+          if (error.code !== "DUPLICATE_TRANSACTION") this.log("Перевод отклонён: " + error.message);
+        }
+        break;
+      case "block": {
+        const result = this.blockchain.receiveBlock(message.block);
+        if (result.missingParent) { this._request(url, message.from, "blocks"); break; }
+        if (result.accepted) {
+          this._save();
+          this._broadcast({ type: "block", block: message.block }, url);
+        }
+        if (result.tipChanged) {
+          this._announce();
+          this.emit("block", message.block);
+        }
+        break;
       }
-      return;
     }
+  }
 
-    const balance = this.blockchain.getBalance(this.wallet.address);
-    if (balance < amount) {
-      console.log(
-        `❌ Недостаточно средств! Баланс: ${balance}, нужно: ${amount}`,
-      );
-      return;
-    }
+  resolveRecipient(input) {
+    if (isAddress(input)) return input;
+    const matches = new Set([...this.peers.values()].filter(peer => peer.identity?.name === input).map(peer => peer.identity.address));
+    if (matches.size !== 1) throw new Error(matches.size ? "Имя неоднозначно. Укажите полный адрес" : "Друг не найден. Укажите его полный адрес");
+    return [...matches][0];
+  }
 
-    const tx = new Transaction(this.wallet.address, toAddress, amount);
-    this.wallet.signTransaction(tx);
-    this.blockchain.pendingTransactions.push(tx);
-    this.saveLocalBlockchain();
-
-    this.ws.send(
-      JSON.stringify({
-        type: "new_transaction",
-        tx: {
-          from: tx.from,
-          to: tx.to,
-          amount: tx.amount,
-          timestamp: tx.timestamp,
-          signature: tx.signature,
-        },
-      }),
-    );
-
-    console.log(`\n💸 Отправлено ${amount} монет другу ${toName}`);
-    setTimeout(() => this.showBalance(), 500);
+  sendCoins(recipient, amount, fee = null) {
+    if (!this.ready) throw new Error("Подождите подключения и синхронизации");
+    const to = this.resolveRecipient(recipient);
+    const amountUnits = parseAmountUnits(String(amount));
+    const feeUnits = fee === null ? this.network.minFeeUnits : parseAmountUnits(String(fee));
+    const transaction = new Transaction({ version: 2, networkId: this.network.networkId, from: this.wallet.address, to, amountUnits, feeUnits, nonce: this.blockchain.getNextNonce(this.wallet.address), publicKey: this.wallet.keys.publicKey, timestamp: Date.now(), signature: null });
+    this.wallet.signTransaction(transaction);
+    const accepted = this.blockchain.addTransaction(transaction);
+    this._save();
+    this._broadcast({ type: "transaction", transaction: accepted });
+    this.emit("transaction", accepted);
+    return { transaction: accepted, id: transactionId(accepted) };
   }
 
   async mine() {
-    if (!this.ready) {
-      console.log("⏳ Подождите, идёт синхронизация...");
-      return;
+    if (!this.ready) throw new Error("Подождите подключения и синхронизации");
+    if (this.mining) throw new Error("Майнинг уже запущен");
+    const controller = new AbortController();
+    this.mining = controller;
+    try {
+      const block = await this.blockchain.mineBlock(this.wallet.address, {
+        signal: controller.signal,
+        onProgress: progress => this.emit("miningProgress", progress),
+      });
+      if (!block) return null;
+      this._save();
+      this._broadcast({ type: "block", block });
+      this._announce();
+      this.emit("block", block);
+      return block;
+    } finally { if (this.mining === controller) this.mining = null; }
+  }
+
+  stopMining() { if (this.mining) this.mining.abort(); }
+
+  showBalance() {
+    const total = this.blockchain.getBalanceUnits(this.wallet.address);
+    const available = this.blockchain.getAvailableBalanceUnits(this.wallet.address);
+    this.log("Баланс: " + formatAmountUnits(total) + " FC | доступно: " + formatAmountUnits(available) + " FC");
+    return { total, available };
+  }
+
+  async close() {
+    if (this.closing) return;
+    this.closing = true;
+    this.ready = false;
+    this.stopMining();
+    if (this.sweep) clearInterval(this.sweep);
+    for (const retry of this.retries.values()) if (retry.timer) clearTimeout(retry.timer);
+    this.retries.clear();
+    for (const connection of this.connections.values()) { clearTimeout(connection.handshake); connection.socket.terminate(); }
+    this.connections.clear();
+    this.requests.clear();
+    if (this.store) {
+      try { this.store.save(this.blockchain); } finally { this.store.release(); this.store = null; }
     }
-
-    if (!this.blockchain) {
-      console.log("⛏️ Блокчейн не загружен");
-      return;
-    }
-
-    const txCount = this.blockchain.pendingTransactions.length;
-    const isEmpty = txCount === 0;
-    console.log(
-      isEmpty
-        ? `\n⛏️ Майнинг пустого блока (награда ${this.blockchain.emptyBlockReward} монета)...`
-        : `\n⛏️ Начинаю майнинг (${txCount} транзакций)...`,
-    );
-    const start = Date.now();
-
-    const block = await this.blockchain.mineBlock(this.wallet.address);
-    const time = ((Date.now() - start) / 1000).toFixed(1);
-
-    if (!block) {
-      console.log(
-        `\n   ❌ Блок устарел — кто-то успел раньше (${time} сек потрачено)`,
-      );
-      console.log(`   Попробуйте mine ещё раз`);
-      return;
-    }
-
-    const rewardTx = block.transactions.find((tx) => tx.from === "SYSTEM");
-    const reward = rewardTx ? rewardTx.amount : 0;
-
-    console.log(`   ⛏️ Блок #${block.index} добыт за ${time} секунд!`);
-    console.log(
-      `   Награда: ${reward} монет (${this.blockchain.miningRewardPercent}% от массы, макс ${this.blockchain.maxMiningReward})`,
-    );
-    console.log(`   Nonce: ${block.nonce}`);
-    console.log(`   Хеш: ${block.hash.substring(0, 20)}...`);
-
-    this.ws.send(
-      JSON.stringify({
-        type: "new_block",
-        block: {
-          index: block.index,
-          timestamp: block.timestamp,
-          transactions: block.transactions,
-          previousHash: block.previousHash,
-          nonce: block.nonce,
-          hash: block.hash,
-        },
-      }),
-    );
-
-    this.saveLocalBlockchain();
-    setTimeout(() => this.showBalance(), 500);
-  }
-
-  showAddress() {
-    console.log(`\n📍 Короткий адрес: ${this.wallet.getShortAddress()}`);
-    console.log(`📍 Полный публичный ключ:`);
-    console.log(this.wallet.address);
-  }
-
-  listFriends() {
-    const friends = Object.keys(this.addressBook).filter(
-      (n) => n !== this.name,
-    );
-    if (friends.length === 0) {
-      console.log("📖 Адресная книга пуста");
-      console.log(
-        "   Друзья появятся автоматически, когда они подключатся к серверу",
-      );
-    } else {
-      console.log(`\n📖 Доступные друзья (${friends.length}):`);
-      for (const name of friends) {
-        const shortAddr = this.addressBook[name].substring(0, 40);
-        console.log(`   ${name}: ${shortAddr}...`);
-      }
-    }
-  }
-
-  syncPool() {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(
-        JSON.stringify({
-          type: "request_pending",
-        }),
-      );
-      console.log("🔄 Запрос синхронизации пула...");
-    }
-  }
-
-  help() {
-    console.log(`
-╔══════════════════════════════════════════════════════════════╗
-║                     ДОСТУПНЫЕ КОМАНДЫ                        ║
-╠══════════════════════════════════════════════════════════════╣
-║  balance    - показать текущий баланс                        ║
-║  address    - показать свой публичный адрес                  ║
-║  friends    - список друзей в адресной книге                 ║
-║  send <имя> <сумма> - отправить монеты другу                 ║
-║  mine       - начать майнинг (подтвердить транзакции)        ║
-║  syncpool   - синхронизировать пул транзакций с сервером     ║
-║  help       - показать эту справку                           ║
-║  exit       - выйти из программы                             ║
-╚══════════════════════════════════════════════════════════════╝
-`);
-  }
-
-  startCLI() {
-    this.rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    console.log("\n💡 Введите help для списка команд\n");
-    this.prompt();
-  }
-
-  prompt() {
-    this.rl.question(`${this.name}> `, (input) => {
-      const parts = input.trim().split(" ");
-      const cmd = parts[0].toLowerCase();
-
-      switch (cmd) {
-        case "balance":
-          this.showBalance();
-          break;
-        case "address":
-          this.showAddress();
-          break;
-        case "friends":
-          this.listFriends();
-          break;
-        case "send":
-          if (parts.length < 3) {
-            console.log("❌ Использование: send <имя_друга> <сумма>");
-            console.log("   Пример: send Bob 100");
-          } else {
-            const amount = parseInt(parts[2]);
-            if (isNaN(amount) || amount <= 0) {
-              console.log("❌ Сумма должна быть положительным числом");
-            } else {
-              this.sendCoins(parts[1], amount);
-            }
-          }
-          break;
-        case "mine":
-          this.mine();
-          break;
-        case "syncpool":
-          this.syncPool();
-          break;
-        case "help":
-          this.help();
-          break;
-        case "exit":
-          console.log("\n👋 До свидания!");
-          this.saveLocalBlockchain();
-          if (this.rl) this.rl.close();
-          if (this.ws) this.ws.close();
-          process.exit(0);
-          break;
-        default:
-          if (input.trim()) {
-            console.log(`❌ Неизвестная команда: "${cmd}"`);
-            console.log("   Введите help для списка команд");
-          }
-      }
-      this.prompt();
-    });
-  }
-
-  init() {
-    this.loadWallet();
-    this.loadAddressBook();
-    this.loadLocalBlockchain();
-    this.connect();
   }
 }
 
