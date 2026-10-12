@@ -1,0 +1,23 @@
+{
+  "height": 111,
+  "tipHash": "000000049271b8befbf853187e22b401cc192dbbaf476d0e332c481a4b72a7fb",
+  "genesisHash": "ba5a60b5d817248a4a5fd3c2be6c2f8b7dbb5583fab34f830ee41ad3e84e05d3",
+  "timestamp": 1779279979356,
+  "sourceSha256": "4e12ebacf31451e19bc683330321b38ddc3c509eec2e652710f7761b2c14e2ea",
+  "blockCount": 112,
+  "allocations": [
+    {
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0JmVlxCf+xwaklglTmVW\nimEZqomq+xr2yLSrMgmGxd7dXHNQXB4LWdMGvjBp9l6/ZWLwMKXgGCkxp1UZInaU\nSGnVe8EbOzUnGR5zMX/PdzR03p77BtCYGq20Hpqwn/2T4DE+rpLTd+IB9Az4A8Db\nlgao4h286ig3fwc8XJmvnh08SrcKYHm/9ONCU3yoYbOBntJq1WQo4eiKHENFvPcp\ndgOhxlb6eFlMBYlZcXyexnFfgayo0Jp39KDsR3vICbgxFWlVDOoaoZXAu8xrSY53\nD5hP6ie43CHPNEYK8ilbZ3hBjidpgNyQFveoEetrlmhIcW1dsvWXyOL613AzqkNn\nOwIDAQAB\n-----END PUBLIC KEY-----\n",
+      "amountUnits": 55200
+    },
+    {
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4QjUGm4u82SOKhZgmdD8\nS+swo69HlqH+sOR9ro0tGmH8N3V+1V0A/YCt9t2CBumqXjsLia/Cse7YIIggf2/I\nAftvVJzDDPQHLSV4pqtj0oItHneNnBuv5yABlAnFZ6n5c0zBrvmc6520ugI6HSnF\noD4ByaEXfgjJmnrDjqrGio94mjx5AXG7uJB9dOYloqGxQGX+aGTG/Qs3AxOUEeNY\n8/7TX3bt5/jBigpbv+7V/44F+TmaRhM3fRtQo7Da8dd+VlIwQFkD3i/q+V1npGkv\nRK7CcFZqdSFYzA5u5FrEyP22hsrBTJ6pNG6cEAfbLaNCMIPvgh+i/IblDMwUBw7C\nFwIDAQAB\n-----END PUBLIC KEY-----\n",
+      "amountUnits": 200000
+    },
+    {
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApcJTpmFih2Kuh8K7N54O\n4aoJjsJ7agqi/p+IuRPB+LhryHc0qQNCOwKpKPcakbjtGzZw12jNvpt++x/FL77x\neWUZx7udSFGkYBhe9JfydqJnqHWkwa+kimGznfNmfYnYx7oxtT46m5F1dsSFAtlB\nayjkOnnMWYfVt9gpe9SG36h0a87VUpbVs+0TB9apyfn2agL1dIpJ+aQ6wgneijoF\n+fFqPwTGGtWcnLIYXMIUI7nJJU7vgBy3NbpFyRFaCNRnD4gudrZQXwplKN/9KrN6\nMIkY8jPVVSmIXRihxwMCoEa9fFioC0zVwccJWMvO0gsIqePkc1Vau+FeUn+YTeFj\nhQIDAQAB\n-----END PUBLIC KEY-----\n",
+      "amountUnits": 200
+    }
+  ],
+  "supplyUnits": 255400
+}

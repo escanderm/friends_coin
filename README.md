@@ -1,150 +1,129 @@
-# FriendCoin 🪙
+# FriendCoin
 
-> Your own cryptocurrency — for your own people.
+FriendCoin is a cryptocurrency project built to learn how wallets, signed transfers, mining, and a shared ledger work. This branch prepares version `2.0.0-rc.1` with protocol 2, encrypted wallets, configurable servers, and standalone clients.
 
-Mine blocks, sign transactions, send coins to your friends. No banks, no exchanges, no VCs. Just a tiny, honest blockchain running between you and the people you actually know — with real RSA signatures, real Proof-of-Work, and a genesis block you can hold in your hand (well, in a JSON file).
+This is a release candidate. The mainnet snapshot is a prepared migration candidate; it does not activate or migrate the existing protocol 1 server. Use testnet to try the new client. Review [release and migration requirements](docs/RELEASE.md) before starting mainnet.
 
-It's Bitcoin's little cousin who shows up to the family barbecue: same DNA, way more fun, zero gas fees.
+## Run a local testnet
 
----
+Source builds require Node.js 22 or newer and npm. CI builds standalone clients with Node.js 24.16.0.
 
-## Download a ready-made client
-
-No Node.js required — grab the binary for your OS and run it:
-
-| Platform              | Link                                                       |
-| --------------------- | ---------------------------------------------------------- |
-| macOS (Apple Silicon) | [Download](http://155.212.227.116:8089/download/mac)        |
-| Linux (x64)           | [Download](http://155.212.227.116:8089/download/linux)      |
-| Windows (x64)         | [Download](http://155.212.227.116:8089/download/win)        |
-
-Or just open the [downloads page](http://155.212.227.116:8089/download).
-
-## Why this exists
-
-Crypto got complicated. Wallets you can't read, fees you can't predict, chains you can't run. FriendCoin strips it back to the part that's actually magical:
-
-- You own a key. The key owns coins. Nobody can fake your signature.
-- You mine a block. The math is real. The reward is yours.
-- Your friend gets the coins. The ledger agrees. Done.
-
-It's a working blockchain you can read end-to-end over a coffee — and then run with your friends over the same WiFi.
-
-## How it works
-
-- 🔑 Every player gets an **RSA wallet** (public + private key)
-- ✍️ Every transaction is **signed** with the private key — forgery is impossible
-- ⛏️ Blocks are mined with **Proof-of-Work** (just like Bitcoin, only friendlier)
-- 💰 The mining reward is **10% of the transaction volume** in the block (capped at 10 coins)
-- 🪹 You can mine **empty blocks** too (no transactions) — but the reward is just 1 coin
-- 🎲 Max **3 transactions per block**, chosen at random
-- 🛡️ A miner earns **no commission** on transactions they're part of (no self-dealing)
-- 🌐 Every client stays in sync through a **WebSocket server**
-- 🔔 Built-in **update notifications** — the server checks your client version on connect
-
-## Quick start (from source)
-
-**1. Clone the repo**
+Install dependencies:
 
 ```bash
-git clone <repo-url>
-cd BLOCKCHAIN
+npm ci
 ```
 
-**2. Install dependencies**
+Start the server in one terminal:
 
 ```bash
-npm install
+npm start -- --network testnet --data-dir ./testnet-server --host 127.0.0.1 --port 8088 --download-port 8089
 ```
 
-**3. Fire up the client**
+Start a client in another terminal:
 
 ```bash
-node start.js
+npm run client -- --network testnet --data-dir ./testnet-client --server ws://127.0.0.1:8088
 ```
 
-On first launch you'll be asked to create a wallet — just enter your name (latin letters, no spaces). Your wallet is saved to `wallet_<name>.json`. That file *is* your money. Guard it.
+Follow the wallet menu to create or open a wallet. New wallets use the encrypted `.fcwallet` format and require a password. Keep a backup of the wallet file and its password. Losing either prevents you from spending its coins.
+
+Use a separate client data directory for each local user. Server and client state should also use separate directories.
+
+## Client settings
+
+Run `npm run client -- --help` for the full reference. Standalone clients accept the same flags:
+
+- `--server URL` selects a full `ws://` or `wss://` URL and saves it for future launches.
+- `--data-dir PATH` selects the directory for settings, wallets, and local state.
+- `--network mainnet|testnet` selects the network. The networks have separate state.
+- `--wallet PATH` opens a specific wallet file, including a file on an external drive.
+- `--relay URL` adds another relay endpoint. Repeat it to configure several relays.
+- `--restore-backup` explicitly restores a validated local state backup. It does not restore or replace wallets.
+- `--version` prints the client version and exits.
+- `--help` prints usage and exits.
+
+By default, data lives in `friendcoin-data` in the source launch directory, or beside the standalone executable. Use `--data-dir` if that directory is not writable or you want to keep your data elsewhere. Settings and wallets remain outside the executable when you replace it with an update.
+
+The server address is chosen in this order: `--server`, `FRIENDCOIN_SERVER_URL`, then saved settings. Without a configured address, the client asks for one before wallet selection. A temporary override on macOS or Linux is:
+
+```bash
+FRIENDCOIN_SERVER_URL=ws://127.0.0.1:8088 npm run client -- --network testnet --data-dir ./testnet-client
+```
+
+The new IP is `185.141.217.117`. Use `ws://185.141.217.117:8088` after a compatible protocol 2 server has been deployed there. Changing the address alone does not upgrade an older server.
+
+After buying a domain, point its DNS record at your server and configure TLS for the WebSocket endpoint, either on the server or through a reverse proxy. Then save the new URL, replacing `coin.example.com` with your domain:
+
+```bash
+npm run client -- --network mainnet --server wss://coin.example.com
+```
+
+No source-code change is needed when the IP or domain changes.
+
+## Wallets and backups
+
+Keep `.fcwallet` files private. Their contents are encrypted; opening them requires the wallet password. Use the wallet menu's explicit legacy import option to convert an old `wallet_<name>.json` file. The importer does not silently load every JSON wallet it finds. Keep the original backup until you have opened the converted wallet and verified its address.
+
+A copy of local blockchain state is not a wallet backup. Back up the encrypted wallet itself, and store its password separately. Testnet coins and mainnet coins are separate; choosing a network does not move a balance between them.
 
 ## Commands
 
-| Command                | What it does                                             |
-| ---------------------- | -------------------------------------------------------- |
-| `balance`              | Show your current balance                                |
-| `send <name> <amount>` | Send coins to a friend                                   |
-| `mine`                 | Mine a block (with transactions if any, empty otherwise) |
-| `friends`              | List everyone in the network                             |
-| `address`              | Show your public address                                 |
-| `syncpool`             | Sync the transaction pool with the server                |
-| `help`                 | Command reference                                        |
-| `exit`                 | Quit                                                     |
+Enter `help` after opening a wallet to see available commands. The basic commands are:
 
-## A day in the life
+- `balance` shows your balance.
+- `send <address|name> <amount> [fee]` sends coins to an address or a known recipient.
+- `mine` mines a block.
+- `friends` lists known users.
+- `address` shows your address.
+- `syncpool` requests the current transaction pool.
+- `info` shows the current network, block, relays, and synchronization status.
+- `history` shows wallet activity.
+- `stop` stops mining.
+- `exit` closes the client.
 
-```
-Alice> send Bob 50
-💸 Sent 50 coins to Bob
+## Standalone clients
 
-Bob> mine
-⛏️  Block #3 mined in 2.4 seconds!
-   Reward: 5 coins (10% of volume, max 10)
+Build a client for your current machine:
 
-Bob> balance
-💰 Balance: 55 coins
+```bash
+npm run build
+npm run build:smoke
 ```
 
-That's the whole loop. Send, mine, repeat — until someone's rich enough to gloat in the group chat.
+`dist/` contains one executable and its `.sha256` checksum. The build does not deploy, upload, or push anything. Supported release targets are:
 
-## Under the hood
+- `friendcoin-macos-arm64`
+- `friendcoin-macos-x64`
+- `friendcoin-linux-x64`
+- `friendcoin-windows-x64.exe`
 
-```
-blockchain.js  — the core: Transaction, Block, Blockchain (SHA-256, RSA, PoW)
-wallet.js      — RSA-2048 key generation & storage
-user.js        — the client: server connection, CLI, sending & mining
-start.js       — entry point: pick or create a wallet
-server.js      — WebSocket server: keeps every client's chain in sync
-```
+These files include the Node.js runtime, so users do not need to install Node.js. Download the matching executable and checksum from the repository's GitHub Releases after a release has been published. The tagged release workflow builds and checks all four targets. No published version 2 release is implied by the presence of this workflow.
 
-Five files. No framework. No build step. Open any one of them and you'll understand it.
+Example on macOS or Linux:
 
-## Wallet security
-
-The file `wallet_<name>.json` holds your **private key**. Whoever holds it, holds the coins. The safest place to keep it is on a **USB stick or external drive** — away from the project folder.
-
-### Running a wallet straight from a USB stick
-
-When you run `node start.js`, pick **"Load wallet from USB / drive"** and point it at the file:
-
-```
-Path to wallet file (wallet_*.json): /Volumes/MYFLASH/wallet_Bob.json
+```bash
+chmod +x friendcoin-macos-arm64
+./friendcoin-macos-arm64 --network testnet --data-dir ./friendcoin-data --server ws://127.0.0.1:8088
 ```
 
-The keys load directly from the drive — no need to copy anything into the project.
+Example in Windows PowerShell:
 
-### House rules
+```powershell
+.\friendcoin-windows-x64.exe --network testnet --data-dir .\friendcoin-data --server ws://127.0.0.1:8088
+```
 
-- **Never lose your wallet file** — lost key = lost coins, forever
-- **Never show your private key to anyone** — with it, they can spend your coins
-- **Never commit your wallet to git** — `wallet_*.json` is already in `.gitignore`, but stay sharp
-- Friends appear in your address book automatically when they connect to the server
-- For a transaction to confirm, someone has to mine a block (`mine`)
-- You can mine without transactions too — the reward is just 1 coin, but the difficulty is higher
+Old binaries still contain old connection and wallet behavior. Rebuild them from this branch; replacing a download link does not update an existing binary.
 
-## The economy
+The legacy download server uses `http://<server>:8089/download`. For the new IP, that would be [the download page](http://185.141.217.117:8089/download), with `/mac`, `/linux`, and `/win` paths if that server provides them. Its availability and the version of files hosted there have not been checked.
 
-| Parameter                  | Value                                                  |
-| -------------------------- | ------------------------------------------------------ |
-| Initial supply             | 1000 coins (genesis block)                             |
-| Block reward               | 10% of transaction volume                              |
-| Reward cap                 | 10 coins                                               |
-| Empty block                | 1 coin, same difficulty                                |
-| Max transactions per block | 3 (randomly selected)                                  |
-| Difficulty (PoW)           | 7.5 (auto-tunes every 50 blocks, targeting ~10 min)    |
+## Checks and release process
 
-## Requirements
+```bash
+npm test
+npm run test:release
+```
 
-- Node.js 16+
-- npm
+CI runs tests and builds on macOS arm64, macOS x64, Linux x64, and Windows x64. Binary smoke checks verify the checksum, `--version`, `--help`, and exit from the empty wallet menu in a temporary data directory.
 
----
-
-Built for friends, by friends. Now go mine something. ⛏️
+See [docs/RELEASE.md](docs/RELEASE.md) for tag naming, GitHub publication, signing limits, and the migration checklist. Passing CI verifies the tested behavior; it does not certify the currency for handling valuable funds.
