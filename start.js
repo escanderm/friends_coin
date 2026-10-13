@@ -21,13 +21,40 @@ class Terminal {
     this.output = output;
     this.closed = false;
     this.muted = false;
+    this.status = "";
     this.readlineOutput = new Writable({
       write: (chunk, encoding, callback) => {
-        if (this.muted) callback();
-        else this.output.write(chunk, encoding, callback);
+        // Keep readline output ordered with direct status writes in the same tick.
+        if (!this.muted) this.output.write(chunk, encoding);
+        callback();
       },
     });
+    Object.defineProperty(this.readlineOutput, "columns", { get: () => this.output.columns || 80 });
+    this.onResize = () => { this.refreshPrompt(); };
+    this.output.on("resize", this.onResize);
     this.openReadline();
+  }
+
+  get interactive() { return Boolean(this.input.isTTY && this.output.isTTY && process.env.TERM !== "dumb"); }
+
+  promptText() {
+    if (!this.interactive || !this.status) return this.questionPrompt;
+    const width = Math.max(1, (this.output.columns || 80) - 1);
+    const characters = Array.from(this.status);
+    const line = characters.length > width ? characters.slice(0, Math.max(0, width - 1)).join("") + "…" : this.status;
+    const color = process.env.NO_COLOR === undefined && process.env.TERM !== "dumb";
+    return (color ? "\x1b[32m" + line + "\x1b[0m" : line) + "\n" + this.questionPrompt;
+  }
+
+  refreshPrompt(update = () => {}) {
+    const redraw = this.waitingForInput && this.interactive && !this.muted && !this.closed;
+    update();
+    // Readline owns the previous prompt height, including wrapped input.
+    if (redraw) { this.rl.setPrompt(this.promptText()); this.rl.prompt(true); }
+  }
+
+  setStatus(message) {
+    this.refreshPrompt(() => { this.status = message; });
   }
 
   openReadline() {
@@ -38,12 +65,13 @@ class Terminal {
 
   question(prompt, secret = false) {
     if (this.rl.closed) return Promise.reject(new Error("Ввод завершён"));
+    this.questionPrompt = prompt;
     this.waitingForInput = true;
     if (secret) { this.output.write(prompt); this.muted = true; }
     return new Promise((resolve, reject) => {
       const onClose = () => { this.waitingForInput = false; this.muted = false; reject(new Error("Ввод завершён")); };
       this.rl.once("close", onClose);
-      this.rl.question(secret ? "" : prompt, answer => {
+      this.rl.question(secret ? "" : this.promptText(), answer => {
         this.rl.removeListener("close", onClose);
         this.waitingForInput = false;
         this.muted = false;
@@ -65,6 +93,8 @@ class Terminal {
       const position = this.rl.getCursorPos();
       readline.moveCursor(this.output, -position.cols, -position.rows);
       readline.clearScreenDown(this.output);
+      // The cursor is now at a fresh line; don't move up a second time on redraw.
+      this.rl.prevRows = 0;
     }
     this.output.write((this.waitingForInput && !redraw ? "\n" : "") + message + "\n");
     if (redraw) this.rl.prompt(true);
@@ -127,7 +157,9 @@ class Terminal {
   }
 
   close() {
+    if (!this.closed && this.status) this.setStatus("");
     this.closed = true;
+    this.output.removeListener("resize", this.onResize);
     if (this.menuCancel) this.menuCancel();
     if (this.rl.history) this.rl.history.length = 0;
     this.rl.line = "";
@@ -271,6 +303,15 @@ function miningText(status) {
   return "Майнинг блока #" + status.height + ": " + seconds + " с | " + rate + " | проверено хешей: " + status.nonce;
 }
 
+function miningLine(status, frame) {
+  const seconds = Math.floor(status.elapsedMs / 1000);
+  const time = Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
+  const rate = status.hashrate >= 1000000 ? (status.hashrate / 1000000).toFixed(2) + " MH/s"
+    : (status.hashrate / 1000).toFixed(1) + " kH/s";
+  const hashes = status.nonce >= 1000000 ? (status.nonce / 1000000).toFixed(1) + " млн" : String(status.nonce);
+  return "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[frame % 10] + " Майнинг #" + status.height + " · " + time + " · " + rate + " · " + hashes + " хешей · stop";
+}
+
 function printHelp() {
   console.log("FriendCoin " + version + "\nPortable wallet, full node and optional miner.\n");
   console.log("Options:\n--server ws://host:8088 | wss://domain\n--relay URL (repeatable additional relay)\n--data-dir PATH\n--network mainnet|testnet\n--wallet PATH\n--restore-backup\n--version\n--help");
@@ -278,15 +319,14 @@ function printHelp() {
 }
 
 async function runCLI(terminal, user) {
-  let lastProgress = -Infinity;
+  let frame = 0;
   const started = status => {
-    lastProgress = -Infinity;
-    terminal.notify("Майнинг запущен: поиск блока #" + status.height + ". Статус обновляется каждые 5 секунд. Остановить: stop");
+    frame = 0;
+    if (!terminal.interactive) terminal.notify("Майнинг запущен: поиск блока #" + status.height + ". Остановить: stop. Текущий статус: info");
+    terminal.setStatus(miningLine(status, frame++));
   };
   const progress = status => {
-    if (status.elapsedMs - lastProgress < 5000) return;
-    lastProgress = status.elapsedMs;
-    terminal.notify(miningText(status));
+    terminal.setStatus(miningLine(status, frame++));
   };
   const pool = result => {
     if (result.status !== "received") {
@@ -334,9 +374,13 @@ async function runCLI(terminal, user) {
           }
           case "mine":
             user.mine().then(block => {
+              terminal.setStatus("");
               if (block) terminal.notify("Добыт блок #" + block.height + ": " + block.hash + "\nМайнинг завершён. Следующий блок: mine");
               else terminal.notify("Майнинг остановлен или в сети появился новый блок. Запустить снова: mine");
-            }).catch(error => terminal.notify("Майнинг: " + error.message));
+            }).catch(error => {
+              if (!user.mining) terminal.setStatus("");
+              terminal.notify("Майнинг: " + error.message);
+            });
             break;
           case "stop":
             console.log(user.mining ? "Останавливаю майнинг…" : "Майнинг не запущен");
@@ -362,6 +406,7 @@ async function runCLI(terminal, user) {
       } catch (error) { console.log(error.message); }
     }
   } finally {
+    terminal.setStatus("");
     user.removeListener("miningStarted", started);
     user.removeListener("miningProgress", progress);
     user.removeListener("poolSync", pool);

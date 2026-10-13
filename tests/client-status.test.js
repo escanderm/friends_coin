@@ -78,9 +78,9 @@ test("async terminal status preserves a partially typed command and hides secret
 });
 
 test("CLI shows mining start/progress/result and pool results, then detaches listeners", async () => {
-  const { user } = userFixture(), messages = [];
+  const { user } = userFixture(), messages = [], statuses = [];
   let calls = 0;
-  const terminal = { rl: {}, notify(message) { messages.push(message); }, async question() {
+  const terminal = { rl: {}, setStatus(message) { statuses.push(message); }, notify(message) { messages.push(message); }, async question() {
     if (calls++ === 0) return "mine";
     if (calls === 2) {
       user.emit("miningProgress", { height: 1, nonce: 500, hashrate: 2000, elapsedMs: 250 });
@@ -93,8 +93,80 @@ test("CLI shows mining start/progress/result and pool results, then detaches lis
   user.blockchain.mineBlock = async () => ({ height: 1, hash: "test-block" });
   await runCLI(terminal, user);
   assert.ok(messages.some(line => line.includes("Майнинг запущен")));
-  assert.equal(messages.filter(line => line.includes("kH/s")).length, 1);
+  assert.equal(messages.filter(line => line.includes("kH/s")).length, 0);
+  assert.ok(statuses.some(line => line.includes("kH/s")));
+  assert.equal(statuses.at(-1), "");
   assert.ok(messages.some(line => line.includes("Добыт блок #1")));
   assert.ok(messages.some(line => line.includes("Пул пуст") && line.includes("Ожидание ответов")));
   for (const name of ["miningStarted", "miningProgress", "poolSync"]) assert.equal(user.listenerCount(name), 0);
+});
+
+// Render the ANSI cursor operations so repeated updates must occupy one visible row.
+function screen(text, columns = 80) {
+  const rows = [[]]; let row = 0, col = 0;
+  const ensure = () => { while (rows.length <= row) rows.push([]); };
+  const tokens = text.match(/\x1b\[[0-9;?]*[A-Za-z]|[^\x1b]/gu) || [];
+  for (const token of tokens) {
+    if (token.startsWith('\x1b[')) {
+      const op = token.at(-1), n = Number(token.slice(2, -1)) || 1;
+      if (op === 'A') row = Math.max(0, row - n);
+      if (op === 'B') row += n;
+      if (op === 'C') col += n;
+      if (op === 'D') col = Math.max(0, col - n);
+      if (op === 'G') col = n - 1;
+      ensure();
+      if (op === 'J') { rows[row].length = col; rows.length = row + 1; }
+      if (op === 'K') rows[row].length = col;
+    } else if (token === '\r') col = 0;
+    else if (token === '\n') { row++; col = 0; ensure(); }
+    else {
+      if (col >= columns) { row++; col = 0; }
+      ensure(); rows[row][col++] = token;
+    }
+  }
+  return rows.map(line => line.join('')).join('\n');
+}
+
+test('live colored status replaces its row, preserves output and edited input, and clears on stop', async t => {
+  const oldTerm = process.env.TERM;
+  process.env.TERM = 'xterm-256color';
+  t.after(() => { if (oldTerm === undefined) delete process.env.TERM; else process.env.TERM = oldTerm; });
+  const input = new PassThrough(); input.isTTY = true;
+  let output = '';
+  const stream = new Writable({ write(chunk, enc, done) { output += chunk; done(); } });
+  stream.isTTY = true; stream.columns = 80;
+  const terminal = new Terminal({ input, output: stream });
+  try {
+    stream.write('PREVIOUS BALANCE\n');
+    terminal.setStatus('⠋ Майнинг #2 · 0:00 · 0.0 kH/s');
+    const answer = terminal.question('Test> ');
+    answer.catch(() => {});
+    terminal.rl.write('balnce');
+    terminal.rl.write(null, { name: 'left' });
+    terminal.rl.write(null, { name: 'left' });
+    terminal.rl.write(null, { name: 'left' });
+    for (let n = 1; n <= 20; n++) terminal.setStatus('⠹ Майнинг #2 · 0:' + String(n).padStart(2, '0') + ' · 1.36 MH/s');
+    terminal.notify('POOL EMPTY');
+    terminal.rl.write('a');
+    await new Promise(resolve => setImmediate(resolve));
+    const rendered = screen(output);
+    assert.match(rendered, /PREVIOUS BALANCE\nPOOL EMPTY\n⠹ Майнинг #2 · 0:20 · 1.36 MH\/s\nTest> balance$/);
+    assert.equal((rendered.match(/Майнинг/g) || []).length, 1);
+    if (process.env.NO_COLOR === undefined && process.env.TERM !== 'dumb') assert.match(output, /\x1b\[32m/);
+    assert.equal(terminal.rl.line, 'balance');
+    terminal.setStatus('');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.doesNotMatch(screen(output), /Майнинг/);
+    terminal.rl.write(null, { name: 'return' });
+    assert.equal(await answer, 'balance');
+    stream.columns = 28;
+    terminal.setStatus('⠹ Майнинг #2 · 0:42 · 1.36 MH/s · 56000000 хешей · stop');
+    const narrow = terminal.question('Test> ');
+    const plain = terminal.promptText().replace(/\x1b\[[0-9;]*m/g, '').split('\n')[0];
+    assert.ok(Array.from(plain).length < stream.columns);
+    assert.ok(plain.endsWith('…'));
+    terminal.close();
+    await assert.rejects(narrow, /Ввод завершён/);
+  } finally { terminal.close(); input.destroy(); }
+  assert.equal(stream.listenerCount('resize'), 0);
 });

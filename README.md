@@ -4,7 +4,7 @@ Your own cryptocurrency — for your own people.
 
 This repository contains the **desktop client**: wallets, signed transfers, mining, local validation and standalone builds. The server implementation and its deployment files are maintained separately.
 
-Version `2.0.0-rc.4` keeps the original wallet menu: **↑ / ↓ and Enter** in an interactive terminal. Encrypted copies of legacy wallets are saved beside the original JSON. This client requires a protocol 2 server.
+Version `2.0.0-rc.5` keeps the original wallet menu: **↑ / ↓ and Enter** in an interactive terminal. Encrypted copies of legacy wallets are saved beside the original JSON. This client requires a protocol 2 server.
 
 ## Download a client
 
@@ -60,7 +60,7 @@ The command prompt keeps the original command-based workflow:
 - `info`, `history`, `syncpool`
 - `help`, `exit`
 
-`mine` reports its start, elapsed time, hashrate and checked hashes every five seconds. It searches for one block; after completion or a changed chain tip, use `mine` again. `stop` cancels the search, and `info` includes the current mining status. Status messages preserve any command you are typing.
+`mine` displays one green status line with a spinner, elapsed time, hashrate and checked hashes. It updates in place above the command prompt and fits the terminal width. Redirected output stays plain and does not print repeated progress lines; use `info` for a snapshot. Set `NO_COLOR` to disable color. It searches for one block; after completion or a changed chain tip, use `mine` again. `stop` cancels the search, and `info` includes the current mining status. Status messages preserve any command you are typing.
 
 `syncpool` reports how many nodes were asked, received and added transfers, and the local pending count. An empty pool, a lost connection or a ten-second timeout is reported explicitly.
 
