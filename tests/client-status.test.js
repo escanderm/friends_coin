@@ -4,7 +4,7 @@ const { PassThrough, Writable } = require("node:stream");
 const { User } = require("../user");
 const { Wallet } = require("../wallet");
 const { getNetwork } = require("../network-config");
-const { Terminal, runCLI } = require("../start");
+const { Terminal, runCLI, rulesText } = require("../start");
 
 const wallet = new Wallet("StatusTest").generate();
 function userFixture(network = getNetwork("testnet")) {
@@ -19,6 +19,40 @@ function userFixture(network = getNetwork("testnet")) {
   user._updateReady();
   return { user, sent };
 }
+
+test("rules report follows the active network and the exact retarget boundary", async () => {
+  const network = { ...getNetwork("testnet"), adjustmentInterval: 2, targetBlockTime: 30,
+    initialTarget: "f".repeat(64), maxTarget: "f".repeat(64),
+    genesis: { timestamp: Date.now() - 60000, allocations: [] } };
+  const { user } = userFixture(network);
+  assert.match(rulesText(user.blockchain), /30 с \(для всей сети\)/);
+  assert.match(rulesText(user.blockchain), /к блоку #3; блоков до пересчёта: 2/);
+  assert.match(rulesText(user.blockchain), /пока нет добытых блоков/);
+  await user.mine();
+  assert.match(rulesText(user.blockchain), /к блоку #3; блоков до пересчёта: 1/);
+  await user.mine();
+  const boundary = rulesText(user.blockchain);
+  assert.match(boundary, /к блоку #3; блоков до пересчёта: 0 — сложность уже рассчитана/);
+  assert.match(boundary, /за текущий период \(блоков: 2\):/);
+  assert.match(boundary, /Сложность для блока #3:/);
+  await user.mine();
+  assert.match(rulesText(user.blockchain), /к блоку #5; блоков до пересчёта: 1/);
+  assert.match(rulesText(user.blockchain), /за текущий период \(блоков: 1\):/);
+});
+
+test("mainnet rules display preserves the existing 10-minute, 50-block consensus", () => {
+  const { user } = userFixture(getNetwork("mainnet"));
+  const before = user.blockchain.genesisHash, rules = user.blockchain.rulesHash;
+  const text = rulesText(user.blockchain);
+  assert.match(text, /10 мин \(для всей сети\)/);
+  assert.match(text, /каждые 50 блоков/);
+  assert.match(text, /к блоку #51; блоков до пересчёта: 50/);
+  assert.match(text, /1\.00 FC \+ комиссии/);
+  assert.match(text, /1000000\.00 FC/);
+  assert.match(text, /Минимальная комиссия: 0\.01 FC/);
+  assert.equal(user.blockchain.genesisHash, before);
+  assert.equal(user.blockchain.rulesHash, rules);
+});
 
 test("manual pool sync reports empty responses, suppresses unsolicited replies and reports timeouts", () => {
   const { user, sent } = userFixture(), reports = [];

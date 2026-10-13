@@ -10,7 +10,7 @@ const { getNetwork } = require("./network-config");
 const { parseArguments, resolveDataDirectory } = require("./cli");
 const { CONFIG_FILE, resolveServerConfig, validateServerUrl, saveServerUrl } = require("./server-config");
 const { NAME_PATTERN } = require("./peer-protocol");
-const { formatAmountUnits } = require("./protocol");
+const { formatAmountUnits, blockWork, RETARGET_FACTOR } = require("./protocol");
 const { version } = require("./package.json");
 const { atomicWrite, WalletLock } = require("./storage");
 const UI_CONFIG_FILE = "friendcoin.ui.json";
@@ -312,10 +312,41 @@ function miningLine(status, frame) {
   return "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[frame % 10] + " Майнинг #" + status.height + " · " + time + " · " + rate + " · " + hashes + " хешей · stop";
 }
 
+function durationText(seconds) {
+  const rounded = Math.round(seconds);
+  if (rounded < 60) return rounded + " с";
+  const minutes = Math.floor(rounded / 60), remainder = rounded % 60;
+  return minutes + " мин" + (remainder ? " " + remainder + " с" : "");
+}
+
+function rulesText(blockchain) {
+  const network = blockchain.network, tip = blockchain.getLastBlock();
+  const interval = network.adjustmentInterval;
+  const periodStart = Math.floor(Math.max(0, tip.height - 1) / interval) * interval;
+  const measuredBlocks = tip.height - periodStart;
+  const adjustmentHeight = periodStart + interval + 1;
+  const remaining = adjustmentHeight - 1 - tip.height;
+  const average = measuredBlocks ? (tip.timestamp - blockchain.chain[periodStart].timestamp) / measuredBlocks / 1000 : null;
+  const issued = blockchain.getIssuedUnits();
+  const reward = Math.min(network.blockRewardUnits, network.maxSupplyUnits - issued);
+  return [
+    "Правила сети: " + network.networkId,
+    "Целевое среднее время блока: " + durationText(network.targetBlockTime) + " (для всей сети)",
+    "Пересчёт сложности: каждые " + interval + " блоков; изменение не более чем в " + RETARGET_FACTOR + " раза за пересчёт",
+    "Следующий пересчёт применяется к блоку #" + adjustmentHeight + "; блоков до пересчёта: " + remaining + (remaining === 0 ? " — сложность уже рассчитана" : ""),
+    "Сложность для блока #" + (tip.height + 1) + ": в среднем " + blockWork(blockchain.getNextTarget()).toLocaleString("ru-RU") + " хешей",
+    "Среднее время за текущий период (блоков: " + measuredBlocks + "): " + (average === null ? "пока нет добытых блоков" : durationText(average)),
+    "Быстрые блоки повышают сложность, медленные снижают её. Время отдельного блока случайно.",
+    "Награда за следующий блок: " + formatAmountUnits(reward) + " FC + комиссии переводов",
+    "Выпущено: " + formatAmountUnits(issued) + " / " + formatAmountUnits(network.maxSupplyUnits) + " FC",
+    "Минимальная комиссия: " + formatAmountUnits(network.minFeeUnits) + " FC; переводов в блоке: до " + network.maxTransactionsPerBlock,
+  ].join("\n");
+}
+
 function printHelp() {
   console.log("FriendCoin " + version + "\nPortable wallet, full node and optional miner.\n");
   console.log("Options:\n--server ws://host:8088 | wss://domain\n--relay URL (repeatable additional relay)\n--data-dir PATH\n--network mainnet|testnet\n--wallet PATH\n--restore-backup\n--version\n--help");
-  console.log("\nCommands:\nbalance | address | friends | info | send <address|name> <amount> [fee]\nmine | stop | history | syncpool | help | exit");
+  console.log("\nCommands:\nbalance | address | friends | info | rules | send <address|name> <amount> [fee]\nmine | stop | history | syncpool | help | exit");
 }
 
 async function runCLI(terminal, user) {
@@ -343,6 +374,7 @@ async function runCLI(terminal, user) {
   try {
     printHelp();
     user.showBalance();
+    console.log("Цель сети: " + durationText(user.network.targetBlockTime) + " на блок в среднем. Пересчёт сложности: каждые " + user.network.adjustmentInterval + " блоков. Подробности: rules");
     while (!terminal.rl.closed) {
       let input;
       try { input = await terminal.question(user.name + "> "); }
@@ -357,7 +389,9 @@ async function runCLI(terminal, user) {
           case "info":
             console.log("Сеть: " + user.network.networkId + "\nБлок: " + user.blockchain.getLastBlock().height + "\nХеш: " + user.blockchain.getLastBlock().hash + "\nНакопленная работа: " + user.blockchain.getChainwork() + "\nПодключено relay: " + [...user.connections.values()].filter(connection => connection.identified).length + "\nГотов: " + (user.ready ? "да" : "подключение или синхронизация") + "\nПул: " + user.blockchain.pendingTransactions.length);
             console.log(miningText(user.miningStatus));
+            console.log(rulesText(user.blockchain));
             break;
+          case "rules": console.log(rulesText(user.blockchain)); break;
           case "friends":
             for (const peer of user.peers.values()) if (peer.identity) console.log(peer.identity.name + "  " + peer.identity.address);
             break;
@@ -471,4 +505,4 @@ async function main() {
 if (require.main === module || isSea()) {
   main().catch(error => { console.error(error.message); process.exitCode = 1; });
 }
-module.exports = { main, Terminal, selectWallet, openWalletLocation, resolveWalletLocation, UI_CONFIG_FILE, runCLI };
+module.exports = { main, Terminal, selectWallet, openWalletLocation, resolveWalletLocation, UI_CONFIG_FILE, runCLI, rulesText };

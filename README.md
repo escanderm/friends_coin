@@ -4,7 +4,7 @@ Your own cryptocurrency — for your own people.
 
 This repository contains the **desktop client**: wallets, signed transfers, mining, local validation and standalone builds. The server implementation and its deployment files are maintained separately.
 
-Version `2.0.0-rc.5` keeps the original wallet menu: **↑ / ↓ and Enter** in an interactive terminal. Encrypted copies of legacy wallets are saved beside the original JSON. This client requires a protocol 2 server.
+Version `2.0.0-rc.6` keeps the original wallet menu: **↑ / ↓ and Enter** in an interactive terminal. Encrypted copies of legacy wallets are saved beside the original JSON. This client requires a protocol 2 server.
 
 ## Download a client
 
@@ -57,12 +57,14 @@ The command prompt keeps the original command-based workflow:
 - `balance`, `address`, `friends`
 - `send <address|name> <amount> [fee]`
 - `mine`, `stop`
-- `info`, `history`, `syncpool`
+- `info`, `rules`, `history`, `syncpool`
 - `help`, `exit`
 
 `mine` displays one green status line with a spinner, elapsed time, hashrate and checked hashes. It updates in place above the command prompt and fits the terminal width. Redirected output stays plain and does not print repeated progress lines; use `info` for a snapshot. Set `NO_COLOR` to disable color. It searches for one block; after completion or a changed chain tip, use `mine` again. `stop` cancels the search, and `info` includes the current mining status. Status messages preserve any command you are typing.
 
 `syncpool` reports how many nodes were asked, received and added transfers, and the local pending count. An empty pool, a lost connection or a ten-second timeout is reported explicitly.
+
+`rules` displays the active network rules and current mining difficulty: target average block time, adjustment interval, next adjustment height, blocks remaining, observed average over the current period, reward, supply limit and minimum fee. The same details are included in `info`, with a short reminder at startup. Mainnet targets 10 minutes between blocks and recalculates difficulty every 50 blocks (applied to blocks 51, 101 and so on). Individual block times vary.
 
 A transfer shows its full recipient address and asks for confirmation before signing.
 
