@@ -4,7 +4,7 @@ Your own cryptocurrency — for your own people.
 
 This repository contains the **desktop client**: wallets, signed transfers, mining, local validation and standalone builds. The server implementation and its deployment files are maintained separately.
 
-Version `2.0.0-rc.3` keeps the original wallet menu: **↑ / ↓ and Enter** in an interactive terminal. Encrypted copies of legacy wallets are saved beside the original JSON. This client requires a protocol 2 server.
+Version `2.0.0-rc.4` keeps the original wallet menu: **↑ / ↓ and Enter** in an interactive terminal. Encrypted copies of legacy wallets are saved beside the original JSON. This client requires a protocol 2 server.
 
 ## Download a client
 
@@ -23,7 +23,7 @@ Use the arrow keys and Enter to select an existing wallet, create a new user, lo
 
 “Загрузить кошелёк с флешки/диска” accepts a **file or folder**. Relative paths such as `../../` and `../wallets` work as before. A folder opens a wallet list with the same arrow controls. For the standalone executable, relative paths start beside the executable; source launches use the current directory.
 
-The last successfully opened wallet is remembered and shown first on the next launch. Its password is still required. Only the file path is saved in local `friendcoin.ui.json`; no password or private key is saved there.
+The last successfully opened wallet is remembered and shown first on the next launch. Its password is still required. A wallet can be open in only one rc.4-or-newer client under the same OS user account, including copies in different folders. A second terminal reports that the wallet is already in use. Close the first client with `exit`; locks left by an exited process are recovered on the next launch. Only the file path is saved in local `friendcoin.ui.json`; no password or private key is saved there.
 
 New wallets are encrypted `.fcwallet` files. Selecting an old `wallet_<name>.json` explicitly imports it into a separate encrypted file beside the original JSON, outside version-specific build folders; the original remains unchanged. Back up the encrypted file and its password separately.
 
@@ -59,6 +59,10 @@ The command prompt keeps the original command-based workflow:
 - `mine`, `stop`
 - `info`, `history`, `syncpool`
 - `help`, `exit`
+
+`mine` reports its start, elapsed time, hashrate and checked hashes every five seconds. It searches for one block; after completion or a changed chain tip, use `mine` again. `stop` cancels the search, and `info` includes the current mining status. Status messages preserve any command you are typing.
+
+`syncpool` reports how many nodes were asked, received and added transfers, and the local pending count. An empty pool, a lost connection or a ten-second timeout is reported explicitly.
 
 A transfer shows its full recipient address and asks for confirmation before signing.
 

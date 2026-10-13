@@ -12,7 +12,7 @@ const { CONFIG_FILE, resolveServerConfig, validateServerUrl, saveServerUrl } = r
 const { NAME_PATTERN } = require("./peer-protocol");
 const { formatAmountUnits } = require("./protocol");
 const { version } = require("./package.json");
-const { atomicWrite } = require("./storage");
+const { atomicWrite, WalletLock } = require("./storage");
 const UI_CONFIG_FILE = "friendcoin.ui.json";
 
 class Terminal {
@@ -38,12 +38,14 @@ class Terminal {
 
   question(prompt, secret = false) {
     if (this.rl.closed) return Promise.reject(new Error("Ввод завершён"));
+    this.waitingForInput = true;
     if (secret) { this.output.write(prompt); this.muted = true; }
     return new Promise((resolve, reject) => {
-      const onClose = () => { this.muted = false; reject(new Error("Ввод завершён")); };
+      const onClose = () => { this.waitingForInput = false; this.muted = false; reject(new Error("Ввод завершён")); };
       this.rl.once("close", onClose);
       this.rl.question(secret ? "" : prompt, answer => {
         this.rl.removeListener("close", onClose);
+        this.waitingForInput = false;
         this.muted = false;
         if (secret) {
           if (this.rl.history) this.rl.history.length = 0;
@@ -54,6 +56,18 @@ class Terminal {
         resolve(answer);
       });
     });
+  }
+
+  notify(message) {
+    if (this.closed || this.muted) return;
+    const redraw = this.waitingForInput && this.input.isTTY;
+    if (redraw) {
+      const position = this.rl.getCursorPos();
+      readline.moveCursor(this.output, -position.cols, -position.rows);
+      readline.clearScreenDown(this.output);
+    }
+    this.output.write((this.waitingForInput && !redraw ? "\n" : "") + message + "\n");
+    if (redraw) this.rl.prompt(true);
   }
 
   async menu(title, items) {
@@ -208,6 +222,7 @@ async function selectWallet(terminal, dataDir, selectedPath) {
     }
     const password = await choosePassword(terminal);
     const wallet = new Wallet(name).generate();
+    terminal.acquireWallet?.(wallet.address, filename);
     wallet.save(password, filename);
     rememberWallet(dataDir, filename);
     console.log("Создан зашифрованный кошелёк: " + filename);
@@ -219,27 +234,41 @@ async function selectWallet(terminal, dataDir, selectedPath) {
 
 async function openWallet(terminal, filename, dataDir) {
   const preview = Wallet.inspect(filename);
-  const wallet = new Wallet(preview.name);
-  if (preview.encrypted) {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const password = await terminal.question("Пароль кошелька: ", true);
-      try { wallet.load(filename, password); rememberWallet(dataDir, filename); return wallet; }
-      catch (error) { if (attempt === 2) throw error; console.log(error.message); }
+  terminal.acquireWallet?.(preview.address, filename);
+  try {
+    const wallet = new Wallet(preview.name);
+    if (preview.encrypted) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const password = await terminal.question("Пароль кошелька: ", true);
+        try { wallet.load(filename, password); rememberWallet(dataDir, filename); return wallet; }
+        catch (error) { if (attempt === 2) throw error; console.log(error.message); }
+      }
+    } else {
+      console.log("Выбран старый незашифрованный кошелёк. Сохраню новую зашифрованную копию; исходный файл останется.");
+      wallet.load(filename);
+      if (!NAME_PATTERN.test(wallet.name)) throw new Error("Имя старого кошелька не подходит для новой сети");
+      const destination = path.join(path.dirname(filename), "wallet_" + wallet.name + ".fcwallet");
+      if (fs.existsSync(destination)) throw new Error("Зашифрованная копия уже существует. Откройте файл: " + destination);
+      console.log("Зашифрованная копия будет сохранена рядом с исходным кошельком: " + destination);
+      const password = await choosePassword(terminal);
+      wallet.save(password, destination);
+      rememberWallet(dataDir, destination);
+      console.log("Зашифрованная копия: " + destination);
+      console.log("Старый JSON содержит открытый ключ доступа. После проверки новой копии храните исходник отдельно.");
+      return wallet;
     }
-  } else {
-    console.log("Выбран старый незашифрованный кошелёк. Сохраню новую зашифрованную копию; исходный файл останется.");
-    wallet.load(filename);
-    if (!NAME_PATTERN.test(wallet.name)) throw new Error("Имя старого кошелька не подходит для новой сети");
-    const destination = path.join(path.dirname(filename), "wallet_" + wallet.name + ".fcwallet");
-    if (fs.existsSync(destination)) throw new Error("Зашифрованная копия уже существует. Откройте файл: " + destination);
-    console.log("Зашифрованная копия будет сохранена рядом с исходным кошельком: " + destination);
-    const password = await choosePassword(terminal);
-    wallet.save(password, destination);
-    rememberWallet(dataDir, destination);
-    console.log("Зашифрованная копия: " + destination);
-    console.log("Старый JSON содержит открытый ключ доступа. После проверки новой копии храните исходник отдельно.");
-    return wallet;
+  } catch (error) {
+    terminal.releaseWallet?.();
+    throw error;
   }
+}
+
+function miningText(status) {
+  if (!status) return "Майнинг: не запущен";
+  const seconds = Math.floor(status.elapsedMs / 1000);
+  const rate = status.hashrate >= 1000000 ? (status.hashrate / 1000000).toFixed(2) + " MH/s"
+    : status.hashrate >= 1000 ? (status.hashrate / 1000).toFixed(1) + " kH/s" : Math.round(status.hashrate) + " H/s";
+  return "Майнинг блока #" + status.height + ": " + seconds + " с | " + rate + " | проверено хешей: " + status.nonce;
 }
 
 function printHelp() {
@@ -249,62 +278,93 @@ function printHelp() {
 }
 
 async function runCLI(terminal, user) {
-  printHelp();
-  user.showBalance();
-  while (!terminal.rl.closed) {
-    let input;
-    try { input = await terminal.question(user.name + "> "); }
-    catch { break; }
-    const [command, ...args] = input.trim().split(/\s+/);
-    try {
-      switch ((command || "").toLowerCase()) {
-        case "": break;
-        case "help": printHelp(); break;
-        case "balance": user.showBalance(); break;
-        case "address": console.log(user.wallet.address); break;
-        case "info":
-          console.log("Сеть: " + user.network.networkId + "\nБлок: " + user.blockchain.getLastBlock().height + "\nХеш: " + user.blockchain.getLastBlock().hash + "\nНакопленная работа: " + user.blockchain.getChainwork() + "\nПодключено relay: " + [...user.connections.values()].filter(connection => connection.identified).length + "\nГотов: " + (user.ready ? "да" : "подключение или синхронизация") + "\nПул: " + user.blockchain.pendingTransactions.length);
-          break;
-        case "friends":
-          for (const peer of user.peers.values()) if (peer.identity) console.log(peer.identity.name + "  " + peer.identity.address);
-          break;
-        case "send": {
-          if (args.length < 2 || args.length > 3) throw new Error("send <адрес или имя> <сумма> [комиссия]");
-          const recipient = user.resolveRecipient(args[0]);
-          console.log("Получатель: " + recipient + "\nСумма: " + args[1] + " FC\nКомиссия: " + (args[2] || formatAmountUnits(user.network.minFeeUnits)) + " FC");
-          const confirm = await terminal.question("Подтвердить перевод? [yes/нет]: ");
-          if (confirm.trim().toLowerCase() !== "yes") { console.log("Отменено"); break; }
-          const result = user.sendCoins(recipient, args[1], args[2] ?? null);
-          console.log("Перевод в пуле: " + result.id + "\nПодтверждение появится после включения в блок.");
-          user.showBalance();
-          break;
-        }
-        case "mine":
-          user.mine().then(block => {
-            if (block) console.log("\nДобыт блок #" + block.height + ": " + block.hash);
-            else console.log("\nМайнинг остановлен или вершина цепи изменилась");
-          }).catch(error => console.log("\nМайнинг: " + error.message));
-          break;
-        case "stop": user.stopMining(); console.log("Запрошена остановка майнинга"); break;
-        case "syncpool":
-          for (const peer of user.peers.values()) user._request(peer.url, peer.id, "pool");
-          console.log("Запрошены пулы подключённых узлов");
-          break;
-        case "history": {
-          const tip = user.blockchain.getLastBlock().height;
-          for (const block of user.blockchain.chain.slice(-20)) {
-            for (const transaction of block.transactions) {
-              if (transaction.from === user.wallet.address || transaction.to === user.wallet.address) {
-                console.log("#" + block.height + "  " + (transaction.type || "transfer") + "  " + formatAmountUnits(transaction.amountUnits) + " FC  подтверждений: " + (tip - block.height + 1));
+  let lastProgress = -Infinity;
+  const started = status => {
+    lastProgress = -Infinity;
+    terminal.notify("Майнинг запущен: поиск блока #" + status.height + ". Статус обновляется каждые 5 секунд. Остановить: stop");
+  };
+  const progress = status => {
+    if (status.elapsedMs - lastProgress < 5000) return;
+    lastProgress = status.elapsedMs;
+    terminal.notify(miningText(status));
+  };
+  const pool = result => {
+    if (result.status !== "received") {
+      terminal.notify("Синхронизация пула: " + (result.status === "timeout" ? "узел не ответил за 10 секунд" : "соединение с узлом потеряно") + ". Ожидается ответов: " + result.remaining);
+      return;
+    }
+    terminal.notify("Пул: получено переводов — " + result.received + ", добавлено — " + result.added + ". " +
+      (result.pending ? "Ожидают блока: " + result.pending + "." : "Пул пуст — неподтверждённых переводов нет.") +
+      (result.remaining ? " Ожидается ответов: " + result.remaining : " Ожидание ответов завершено."));
+  };
+  user.on("miningStarted", started);
+  user.on("miningProgress", progress);
+  user.on("poolSync", pool);
+  try {
+    printHelp();
+    user.showBalance();
+    while (!terminal.rl.closed) {
+      let input;
+      try { input = await terminal.question(user.name + "> "); }
+      catch { break; }
+      const [command, ...args] = input.trim().split(/\s+/);
+      try {
+        switch ((command || "").toLowerCase()) {
+          case "": break;
+          case "help": printHelp(); break;
+          case "balance": user.showBalance(); break;
+          case "address": console.log(user.wallet.address); break;
+          case "info":
+            console.log("Сеть: " + user.network.networkId + "\nБлок: " + user.blockchain.getLastBlock().height + "\nХеш: " + user.blockchain.getLastBlock().hash + "\nНакопленная работа: " + user.blockchain.getChainwork() + "\nПодключено relay: " + [...user.connections.values()].filter(connection => connection.identified).length + "\nГотов: " + (user.ready ? "да" : "подключение или синхронизация") + "\nПул: " + user.blockchain.pendingTransactions.length);
+            console.log(miningText(user.miningStatus));
+            break;
+          case "friends":
+            for (const peer of user.peers.values()) if (peer.identity) console.log(peer.identity.name + "  " + peer.identity.address);
+            break;
+          case "send": {
+            if (args.length < 2 || args.length > 3) throw new Error("send <адрес или имя> <сумма> [комиссия]");
+            const recipient = user.resolveRecipient(args[0]);
+            console.log("Получатель: " + recipient + "\nСумма: " + args[1] + " FC\nКомиссия: " + (args[2] || formatAmountUnits(user.network.minFeeUnits)) + " FC");
+            const confirm = await terminal.question("Подтвердить перевод? [yes/нет]: ");
+            if (confirm.trim().toLowerCase() !== "yes") { console.log("Отменено"); break; }
+            const result = user.sendCoins(recipient, args[1], args[2] ?? null);
+            console.log("Перевод в пуле: " + result.id + "\nПодтверждение появится после включения в блок.");
+            user.showBalance();
+            break;
+          }
+          case "mine":
+            user.mine().then(block => {
+              if (block) terminal.notify("Добыт блок #" + block.height + ": " + block.hash + "\nМайнинг завершён. Следующий блок: mine");
+              else terminal.notify("Майнинг остановлен или в сети появился новый блок. Запустить снова: mine");
+            }).catch(error => terminal.notify("Майнинг: " + error.message));
+            break;
+          case "stop":
+            console.log(user.mining ? "Останавливаю майнинг…" : "Майнинг не запущен");
+            user.stopMining();
+            break;
+          case "syncpool":
+            console.log("Синхронизация пула: запрошено узлов — " + user.syncPool() + ". Ожидаю ответы (до 10 секунд)…");
+            break;
+          case "history": {
+            const tip = user.blockchain.getLastBlock().height;
+            for (const block of user.blockchain.chain.slice(-20)) {
+              for (const transaction of block.transactions) {
+                if (transaction.from === user.wallet.address || transaction.to === user.wallet.address) {
+                  console.log("#" + block.height + "  " + (transaction.type || "transfer") + "  " + formatAmountUnits(transaction.amountUnits) + " FC  подтверждений: " + (tip - block.height + 1));
+                }
               }
             }
+            break;
           }
-          break;
+          case "exit": return;
+          default: console.log("Неизвестная команда. Введите help");
         }
-        case "exit": return;
-        default: console.log("Неизвестная команда. Введите help");
-      }
-    } catch (error) { console.log(error.message); }
+      } catch (error) { console.log(error.message); }
+    }
+  } finally {
+    user.removeListener("miningStarted", started);
+    user.removeListener("miningProgress", progress);
+    user.removeListener("poolSync", pool);
   }
 }
 
@@ -316,6 +376,13 @@ async function main() {
   const dataDir = resolveDataDirectory(options["data-dir"]);
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const terminal = new Terminal();
+  let walletLock;
+  terminal.acquireWallet = (address, filename) => {
+    const lock = new WalletLock(address, filename);
+    lock.acquire();
+    walletLock = lock;
+  };
+  terminal.releaseWallet = () => { walletLock?.release(); walletLock = null; };
   let user;
   try {
     console.log("FriendCoin " + version + " | " + network.networkId);
@@ -334,7 +401,7 @@ async function main() {
     console.log("Relay: " + serverUrl + "\nДанные: " + dataDir);
     const wallet = await selectWallet(terminal, dataDir, options.wallet);
     if (!wallet) return;
-    user = new User(wallet.name, serverUrl, null, { wallet, network, dataDir, relays });
+    user = new User(wallet.name, serverUrl, null, { wallet, network, dataDir, relays, logger: message => terminal.notify(String(message).replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, 2000)) });
     const interrupt = () => terminal.close();
     process.once("SIGINT", interrupt);
     process.once("SIGTERM", interrupt);
@@ -351,11 +418,12 @@ async function main() {
     }
   } finally {
     terminal.close();
-    if (user) await user.close();
+    try { if (user) await user.close(); }
+    finally { terminal.releaseWallet(); }
   }
 }
 
 if (require.main === module || isSea()) {
   main().catch(error => { console.error(error.message); process.exitCode = 1; });
 }
-module.exports = { main, Terminal, selectWallet, openWalletLocation, resolveWalletLocation, UI_CONFIG_FILE };
+module.exports = { main, Terminal, selectWallet, openWalletLocation, resolveWalletLocation, UI_CONFIG_FILE, runCLI };

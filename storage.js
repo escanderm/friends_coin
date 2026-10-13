@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const os = require("os");
 
 function atomicWrite(filename, contents, mode = 0o600) {
   fs.mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });
@@ -110,4 +111,23 @@ class ChainStore {
   }
 }
 
-module.exports = { atomicWrite, ChainStore };
+// Address-based ownership also covers copied wallets and different client versions.
+// This directory contains only process metadata, never wallet keys.
+class WalletLock extends ChainStore {
+  constructor(address, filename, root = path.join(os.homedir(), ".friendcoin", "wallet-locks")) {
+    super(path.join(root, crypto.createHash("sha256").update(address).digest("hex")));
+    this.walletFilename = path.resolve(filename);
+  }
+
+  acquire() {
+    try { super.acquire(); }
+    catch (error) {
+      if (/уже используется|захватывает/.test(error.message)) {
+        throw new Error("Кошелёк уже используется в другом терминале. Закройте его командой exit и повторите запуск.\nФайл: " + this.walletFilename);
+      }
+      throw error;
+    }
+  }
+}
+
+module.exports = { atomicWrite, ChainStore, WalletLock };

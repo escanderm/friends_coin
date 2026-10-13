@@ -35,6 +35,7 @@ class User extends EventEmitter {
     this.closing = false;
     this.storageFailed = false;
     this.mining = null;
+    this.miningStatus = null;
     this.sweep = null;
     this.log = options.logger || (message => console.log(String(message).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "").slice(0, 2000)));
   }
@@ -53,7 +54,7 @@ class User extends EventEmitter {
       this.store.save(this.blockchain);
     } catch (error) { this.store.release(); this.store = null; throw error; }
     this.sweep = setInterval(() => {
-      for (const [id, request] of this.requests) if (request.expires < Date.now()) this.requests.delete(id);
+      this._expireRequests();
       this._updateReady();
     }, 1000);
     this.sweep.unref();
@@ -67,6 +68,28 @@ class User extends EventEmitter {
     const wasReady = this.ready;
     this.ready = connected && !synchronizing && !this.storageFailed && !this.closing;
     if (this.ready && !wasReady) this.emit("ready");
+  }
+
+  _expireRequests(now = Date.now()) {
+    for (const [id, request] of this.requests) {
+      if (request.expires >= now) continue;
+      this.requests.delete(id);
+      if (request.reportPool) this.emit("poolSync", { status: "timeout", remaining: this._pendingPoolReports() });
+    }
+  }
+
+  _pendingPoolReports() {
+    return [...this.requests.values()].filter(request => request.reportPool).length;
+  }
+
+  syncPool() {
+    let requested = 0;
+    for (const peer of this.peers.values()) {
+      const id = this._request(peer.url, peer.id, "pool");
+      if (id) { this.requests.get(id).reportPool = true; requested++; }
+    }
+    if (!requested) throw new Error("Нет доступных узлов для синхронизации пула. Проверьте подключение командой info");
+    return requested;
   }
 
   async connect() {
@@ -111,7 +134,10 @@ class User extends EventEmitter {
       this.connections.delete(url);
       if (this.ws === socket) this.ws = [...this.connections.values()][0]?.socket || null;
       for (const [key, peer] of this.peers) if (peer.url === url) this.peers.delete(key);
-      for (const [id, request] of this.requests) if (request.url === url) this.requests.delete(id);
+      for (const [id, request] of this.requests) if (request.url === url) {
+        this.requests.delete(id);
+        if (request.reportPool) this.emit("poolSync", { status: "disconnected", remaining: this._pendingPoolReports() });
+      }
       this._updateReady();
       if (!this.ready && this.mining) this.mining.abort();
       this.emit("disconnected", url);
@@ -156,7 +182,9 @@ class User extends EventEmitter {
   _announce() { this._broadcast({ type: "announce", tip: tipOf(this.blockchain) }); }
 
   _request(url, peerId, type, locator = null) {
-    if ([...this.requests.values()].some(request => request.url === url && request.peerId === peerId && request.type === type)) return;
+    for (const [id, request] of this.requests) {
+      if (request.url === url && request.peerId === peerId && request.type === type) return id;
+    }
     if (this.requests.size >= 128) return;
     const requestId = crypto.randomUUID();
     const selectedLocator = locator || this.blockchain.getLocator();
@@ -166,6 +194,7 @@ class User extends EventEmitter {
       : { type: "request_pool", to: peerId, requestId };
     if (!this._send(url, message)) this.requests.delete(requestId);
     this._updateReady();
+    return this.requests.has(requestId) ? requestId : null;
   }
 
   _updatePeers(url, peers) {
@@ -257,11 +286,16 @@ class User extends EventEmitter {
         const request = this.requests.get(message.requestId);
         if (!request || request.url !== url || request.peerId !== message.from || request.type !== "pool") return;
         this.requests.delete(message.requestId);
+        let added = 0;
         for (const transaction of message.transactions) {
-          try { this.blockchain.addTransaction(transaction); } catch { /* Duplicate or incompatible pending transfer. */ }
+          try { this.blockchain.addTransaction(transaction); added++; } catch { /* Duplicate or incompatible pending transfer. */ }
         }
         this._save();
         this._updateReady();
+        if (request.reportPool) this.emit("poolSync", {
+          status: "received", received: message.transactions.length, added,
+          pending: this.blockchain.pendingTransactions.length, remaining: this._pendingPoolReports(),
+        });
         break;
       }
       case "transaction":
@@ -316,10 +350,15 @@ class User extends EventEmitter {
     if (this.mining) throw new Error("Майнинг уже запущен");
     const controller = new AbortController();
     this.mining = controller;
+    this.miningStatus = { height: this.blockchain.getLastBlock().height + 1, nonce: 0, hashrate: 0, elapsedMs: 0 };
     try {
+      this.emit("miningStarted", this.miningStatus);
       const block = await this.blockchain.mineBlock(this.wallet.address, {
         signal: controller.signal,
-        onProgress: progress => this.emit("miningProgress", progress),
+        onProgress: progress => {
+          this.miningStatus = { ...this.miningStatus, ...progress };
+          this.emit("miningProgress", this.miningStatus);
+        },
       });
       if (!block) return null;
       this._save();
@@ -327,7 +366,9 @@ class User extends EventEmitter {
       this._announce();
       this.emit("block", block);
       return block;
-    } finally { if (this.mining === controller) this.mining = null; }
+    } finally {
+      if (this.mining === controller) { this.mining = null; this.miningStatus = null; }
+    }
   }
 
   stopMining() { if (this.mining) this.mining.abort(); }
