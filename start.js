@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const readline = require("readline");
 const { Writable } = require("stream");
 const { isSea } = require("node:sea");
@@ -11,23 +12,33 @@ const { CONFIG_FILE, resolveServerConfig, validateServerUrl, saveServerUrl } = r
 const { NAME_PATTERN } = require("./peer-protocol");
 const { formatAmountUnits } = require("./protocol");
 const { version } = require("./package.json");
+const { atomicWrite } = require("./storage");
+const UI_CONFIG_FILE = "friendcoin.ui.json";
 
 class Terminal {
-  constructor() {
+  constructor({ input = process.stdin, output = process.stdout } = {}) {
+    this.input = input;
+    this.output = output;
+    this.closed = false;
     this.muted = false;
-    const output = new Writable({
+    this.readlineOutput = new Writable({
       write: (chunk, encoding, callback) => {
         if (this.muted) callback();
-        else process.stdout.write(chunk, encoding, callback);
+        else this.output.write(chunk, encoding, callback);
       },
     });
-    this.rl = readline.createInterface({ input: process.stdin, output, terminal: Boolean(process.stdin.isTTY), historySize: 0 });
+    this.openReadline();
+  }
+
+  openReadline() {
+    this.rl = readline.createInterface({ input: this.input, output: this.readlineOutput, terminal: Boolean(this.input.isTTY), historySize: 0 });
     this.rl.on("SIGINT", () => this.close());
+    this.rl.on("close", () => { if (!this.switchingInput) this.closed = true; });
   }
 
   question(prompt, secret = false) {
     if (this.rl.closed) return Promise.reject(new Error("Ввод завершён"));
-    if (secret) { process.stdout.write(prompt); this.muted = true; }
+    if (secret) { this.output.write(prompt); this.muted = true; }
     return new Promise((resolve, reject) => {
       const onClose = () => { this.muted = false; reject(new Error("Ввод завершён")); };
       this.rl.once("close", onClose);
@@ -38,19 +49,118 @@ class Terminal {
           if (this.rl.history) this.rl.history.length = 0;
           this.rl.line = "";
           this.rl.cursor = 0;
-          process.stdout.write("\n");
+          this.output.write("\n");
         }
         resolve(answer);
       });
     });
   }
 
+  async menu(title, items) {
+    if (this.closed || !items.length) throw new Error("Ввод завершён");
+    if (!this.input.isTTY || typeof this.input.setRawMode !== "function") {
+      this.output.write(title + "\n" + items.map((item, index) => (index + 1) + ". " + item).join("\n") + "\n");
+      const answer = await this.question("Введите номер (1-" + items.length + "): ");
+      const index = Number(answer.trim()) - 1;
+      if (!Number.isInteger(index) || index < 0 || index >= items.length) throw new Error("Неверный номер кошелька");
+      return index;
+    }
+    // Readline owns raw input while asking questions; release it for the menu.
+    this.switchingInput = true;
+    this.rl.close();
+    this.switchingInput = false;
+    const previousRaw = Boolean(this.input.isRaw);
+    const clean = value => String(value).replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+    const display = value => {
+      const characters = Array.from(clean(value)), width = Math.max(8, (this.output.columns || 80) - 6);
+      return characters.length > width ? characters.slice(0, width - 1).join("") + "…" : characters.join("");
+    };
+    let selected = 0, rendered = false;
+    const render = () => {
+      if (rendered) readline.moveCursor(this.output, 0, -(items.length + 1));
+      const lines = [display(title), ...items.map((item, index) => index === selected ? "\x1b[36m\x1b[1m ▸ " + display(item) + "\x1b[0m" : "   " + display(item))];
+      for (const line of lines) { readline.clearLine(this.output, 0); readline.cursorTo(this.output, 0); this.output.write(line + "\n"); }
+      rendered = true;
+    };
+    return new Promise((resolve, reject) => {
+      const finish = (index, error) => {
+        this.input.removeListener("keypress", onKey);
+        this.input.removeListener("end", onEnd);
+        this.menuCancel = null;
+        this.input.setRawMode(previousRaw);
+        this.output.write("\x1b[0m\x1b[?25h");
+        if (!this.closed) this.openReadline();
+        else this.input.pause();
+        if (error) reject(error); else resolve(index);
+      };
+      const onEnd = () => { this.closed = true; finish(null, new Error("Ввод завершён")); };
+      const onKey = (_, key = {}) => {
+        if (key.ctrl && key.name === "c") { this.closed = true; finish(null); }
+        else if (key.name === "up") { selected = Math.max(0, selected - 1); render(); }
+        else if (key.name === "down") { selected = Math.min(items.length - 1, selected + 1); render(); }
+        else if (key.name === "return" || key.name === "enter") finish(selected);
+        else if (key.name === "escape") finish(null);
+      };
+      this.menuCancel = () => finish(null);
+      readline.emitKeypressEvents(this.input);
+      this.input.on("keypress", onKey);
+      this.input.once("end", onEnd);
+      this.input.setRawMode(true);
+      this.input.resume();
+      this.output.write("\x1b[?25l");
+      render();
+    });
+  }
+
   close() {
+    this.closed = true;
+    if (this.menuCancel) this.menuCancel();
     if (this.rl.history) this.rl.history.length = 0;
     this.rl.line = "";
     this.rl.cursor = 0;
     this.rl.close();
   }
+}
+
+function resolveWalletLocation(input, base = isSea() || process.pkg ? path.dirname(process.execPath) : process.cwd()) {
+  const value = String(input || "").trim();
+  if (!value) throw new Error("Укажите путь к папке или файлу кошелька");
+  if (value === "~") return os.homedir();
+  if (value.startsWith("~/") || value.startsWith("~\\")) return path.resolve(os.homedir(), value.slice(2));
+  return path.resolve(base, value);
+}
+
+function lastWalletPath(dataDir) {
+  try {
+    const value = JSON.parse(fs.readFileSync(path.join(dataDir, UI_CONFIG_FILE), "utf8")).walletPath;
+    return typeof value === "string" && path.isAbsolute(value) && !value.includes("\0") ? value : null;
+  } catch { return null; }
+}
+
+function rememberWallet(dataDir, filename) {
+  atomicWrite(path.join(dataDir, UI_CONFIG_FILE), JSON.stringify({ walletPath: path.resolve(filename) }, null, 2) + "\n");
+}
+
+function walletFiles(directory) {
+  return fs.readdirSync(directory).filter(name => name.endsWith(".fcwallet") || /^wallet_.+\.json$/.test(name)).sort().map(name => path.join(directory, name));
+}
+
+function walletLabel(filename) {
+  if (filename.endsWith(".json")) return path.basename(filename).replace(/^wallet_/, "").replace(/\.json$/, "") + " (старый кошелёк — импорт)";
+  const preview = Wallet.inspect(filename);
+  return preview.name + " (" + preview.address.slice(0, 16) + "…)";
+}
+
+async function openWalletLocation(terminal, input, dataDir) {
+  const location = resolveWalletLocation(input);
+  const stat = fs.statSync(location);
+  if (stat.isFile()) return openWallet(terminal, location, dataDir);
+  if (!stat.isDirectory()) throw new Error("Укажите папку или файл кошелька");
+  const files = walletFiles(location);
+  if (!files.length) throw new Error("Кошельки не найдены в этой папке");
+  const selection = await terminal.menu("📂 Кошельки в " + location + ":", [...files.map(walletLabel), "Назад"]);
+  if (selection === null || selection === files.length) return null;
+  return openWallet(terminal, files[selection], dataDir);
 }
 
 async function choosePassword(terminal) {
@@ -67,40 +177,44 @@ async function choosePassword(terminal) {
 }
 
 async function selectWallet(terminal, dataDir, selectedPath) {
-  if (selectedPath) return openWallet(terminal, path.resolve(selectedPath), dataDir);
-  const files = fs.readdirSync(dataDir).filter(name => name.endsWith(".fcwallet")).sort();
-  const choices = [];
-  for (const filename of files) {
-    try {
-      const preview = Wallet.inspect(path.join(dataDir, filename));
-      choices.push({ filename, preview });
-    } catch (error) { console.log("Пропущен повреждённый кошелёк " + filename + ": " + error.message); }
+  if (selectedPath) return openWalletLocation(terminal, selectedPath, dataDir);
+  while (!terminal.closed) {
+    const launchDir = resolveWalletLocation(".");
+    const remembered = lastWalletPath(dataDir);
+    const candidates = [...(remembered && fs.existsSync(remembered) ? [remembered] : []), ...walletFiles(dataDir), ...(launchDir !== dataDir ? walletFiles(launchDir) : [])];
+    const choices = [];
+    for (const filename of new Set(candidates)) {
+      try { choices.push({ filename, label: walletLabel(filename) }); }
+      catch { console.log("Пропущен повреждённый кошелёк: " + path.basename(filename).replace(/[\u0000-\u001f\u007f-\u009f]/g, "")); }
+    }
+    const selection = await terminal.menu("📂 Выберите кошелёк:", [...choices.map(choice => choice.label), "Создать нового пользователя", "Загрузить кошелёк с флешки/диска", "Выйти"]);
+    if (selection === null || selection === choices.length + 2) { console.log("До свидания!"); return null; }
+    if (selection < choices.length) return openWallet(terminal, choices[selection].filename, dataDir);
+    if (selection === choices.length + 1) {
+      const location = await terminal.question("Путь к папке или файлу кошелька: ");
+      try {
+        const wallet = await openWalletLocation(terminal, location, dataDir);
+        if (wallet) return wallet;
+      } catch (error) { console.log(error.message); }
+      continue;
+    }
+    let name, filename;
+    while (!terminal.closed) {
+      name = (await terminal.question("Введите ваше имя (латиница, цифры, подчёркивание, до 32 символов): ")).trim();
+      filename = path.join(dataDir, "wallet_" + name + ".fcwallet");
+      if (!NAME_PATTERN.test(name)) { console.log("Имя может содержать только латиницу, цифры и подчёркивание, до 32 символов"); continue; }
+      if (fs.existsSync(filename)) { console.log("Этот кошелёк уже существует"); continue; }
+      break;
+    }
+    const password = await choosePassword(terminal);
+    const wallet = new Wallet(name).generate();
+    wallet.save(password, filename);
+    rememberWallet(dataDir, filename);
+    console.log("Создан зашифрованный кошелёк: " + filename);
+    console.log("Сохраните резервную копию файла и пароль отдельно. Восстановить забытый пароль программа не сможет.");
+    return wallet;
   }
-  console.log("\nВыберите кошелёк:");
-  choices.forEach((choice, index) => console.log((index + 1) + ". " + choice.preview.name + " (" + choice.preview.address.slice(0, 16) + "…)"));
-  const create = choices.length + 1, load = choices.length + 2, exit = choices.length + 3;
-  console.log(create + ". Создать кошелёк");
-  console.log(load + ". Открыть кошелёк с флешки или импортировать старый JSON");
-  console.log(exit + ". Выйти");
-  const answer = await terminal.question("Введите номер (1-" + exit + "): ");
-  const selection = Number(answer.trim());
-  if (selection === exit) { console.log("До свидания"); return null; }
-  if (selection === load) {
-    const filename = await terminal.question("Полный путь к кошельку: ");
-    return openWallet(terminal, path.resolve(filename.trim()), dataDir);
-  }
-  if (selection >= 1 && selection <= choices.length) return openWallet(terminal, path.join(dataDir, choices[selection - 1].filename), dataDir);
-  if (selection !== create) throw new Error("Неверный номер кошелька");
-  const name = (await terminal.question("Имя (латиница, цифры, подчёркивание, до 32 символов): ")).trim();
-  if (!NAME_PATTERN.test(name)) throw new Error("Неверное имя");
-  const filename = path.join(dataDir, "wallet_" + name + ".fcwallet");
-  if (fs.existsSync(filename)) throw new Error("Этот кошелёк уже существует");
-  const password = await choosePassword(terminal);
-  const wallet = new Wallet(name).generate();
-  wallet.save(password, filename);
-  console.log("Создан зашифрованный кошелёк: " + filename);
-  console.log("Сохраните резервную копию файла и пароль отдельно. Восстановить забытый пароль программа не сможет.");
-  return wallet;
+  return null;
 }
 
 async function openWallet(terminal, filename, dataDir) {
@@ -109,7 +223,7 @@ async function openWallet(terminal, filename, dataDir) {
   if (preview.encrypted) {
     for (let attempt = 0; attempt < 3; attempt++) {
       const password = await terminal.question("Пароль кошелька: ", true);
-      try { wallet.load(filename, password); return wallet; }
+      try { wallet.load(filename, password); rememberWallet(dataDir, filename); return wallet; }
       catch (error) { if (attempt === 2) throw error; console.log(error.message); }
     }
   } else {
@@ -119,6 +233,7 @@ async function openWallet(terminal, filename, dataDir) {
     const destination = path.join(dataDir, "wallet_" + wallet.name + ".fcwallet");
     const password = await choosePassword(terminal);
     wallet.save(password, destination);
+    rememberWallet(dataDir, destination);
     console.log("Зашифрованная копия: " + destination);
     console.log("Старый JSON содержит открытый ключ доступа. После проверки новой копии храните исходник отдельно.");
     return wallet;
@@ -244,4 +359,4 @@ async function main() {
 if (require.main === module || isSea()) {
   main().catch(error => { console.error(error.message); process.exitCode = 1; });
 }
-module.exports = { main, Terminal };
+module.exports = { main, Terminal, selectWallet, openWalletLocation, resolveWalletLocation, UI_CONFIG_FILE };

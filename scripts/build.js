@@ -9,6 +9,7 @@ const { artifactName, artifactPath } = require("./build-target");
 
 const root = path.resolve(__dirname, "..");
 const fuse = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
+const clientSources = new Set(["start.js", "user.js", "wallet.js", "blockchain.js", "protocol.js", "peer-protocol.js", "storage.js", "cli.js", "network-config.js", "server-config.js"]);
 
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
@@ -24,7 +25,7 @@ function assertPublicInputs(inputs) {
       throw new Error("Refusing to embed an input outside the project directory");
     }
     if (relative.startsWith("node_modules/") && !relative.endsWith(".node")) continue;
-    if (relative.endsWith(".js") && !/^(tests|scripts|data|wallets)\//.test(relative)) continue;
+    if (clientSources.has(relative)) continue;
     if (relative === "package.json" || /^networks\/[a-zA-Z0-9_.-]+\.json$/.test(relative)) continue;
     throw new Error(`Refusing to embed a non-source input: ${relative}`);
   }

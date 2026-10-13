@@ -3,6 +3,18 @@ node_modules/
 
 # Локальный адрес сервера
 friendcoin.config.json
+friendcoin.ui.json
+.private-server/
+server.js
+Dockerfile
+.dockerignore
+deploy.sh
+scripts/smoke-container.js
+scripts/smoke-network.js
+tests/server.test.js
+tests/client.test.js
+tests/dense-sync.test.js
+.github/workflows/container.yml
 
 # Личные кошельки
 wallet_*.json
