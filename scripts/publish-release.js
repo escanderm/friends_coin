@@ -55,8 +55,8 @@ module.exports = async function publish({ github, context, core }) {
       body: [
         `FriendCoin ${version}: protocol 2 client for macOS, Linux, and Windows.`,
         prerelease
-          ? "This is a release candidate. The mainnet snapshot is a prepared migration candidate; it does not activate or migrate the legacy server."
-          : "Review the migration and operating requirements before starting a mainnet server.",
+          ? "This is a release candidate. Connect to a compatible protocol 2 server; client downloads do not deploy server changes."
+          : "Connect to a compatible protocol 2 server. Review docs/MIGRATION.md before upgrading an existing installation.",
         "Wallets and local settings are stored outside the executable. Verify downloads against SHA256SUMS.",
         "macOS binaries use an ad-hoc signature, not Apple notarization. Windows binaries are not Authenticode-signed.",
         "See README.md and docs/RELEASE.md in the tagged source for usage, migration, and limitations.",

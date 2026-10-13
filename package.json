@@ -1,6 +1,6 @@
 {
   "name": "friendcoin",
-  "version": "2.0.0-rc.2",
+  "version": "2.0.0-rc.3",
   "description": "Криптовалюта для друзей",
   "main": "start.js",
   "scripts": {
@@ -15,7 +15,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "ws": "8.20.0"
+    "ws": "8.22.0"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

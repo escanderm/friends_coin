@@ -4,7 +4,7 @@ Your own cryptocurrency — for your own people.
 
 This repository contains the **desktop client**: wallets, signed transfers, mining, local validation and standalone builds. The server implementation and its deployment files are maintained separately.
 
-Version `2.0.0-rc.2` restores the original wallet menu: **↑ / ↓ and Enter** in an interactive terminal. The protocol 2 network is a migration candidate; the existing protocol 1 server has not been upgraded.
+Version `2.0.0-rc.3` keeps the original wallet menu: **↑ / ↓ and Enter** in an interactive terminal. Encrypted copies of legacy wallets are saved beside the original JSON. This client requires a protocol 2 server.
 
 ## Download a client
 
@@ -25,7 +25,7 @@ Use the arrow keys and Enter to select an existing wallet, create a new user, lo
 
 The last successfully opened wallet is remembered and shown first on the next launch. Its password is still required. Only the file path is saved in local `friendcoin.ui.json`; no password or private key is saved there.
 
-New wallets are encrypted `.fcwallet` files. Selecting an old `wallet_<name>.json` explicitly imports it into a separate encrypted file; the original remains unchanged. Back up the encrypted file and its password separately.
+New wallets are encrypted `.fcwallet` files. Selecting an old `wallet_<name>.json` explicitly imports it into a separate encrypted file beside the original JSON, outside version-specific build folders; the original remains unchanged. Back up the encrypted file and its password separately.
 
 ## Connection settings
 
@@ -35,7 +35,7 @@ The server address is configurable: `--server`, then `FRIENDCOIN_SERVER_URL`, th
 ./friendcoin-macos-arm64 --server ws://185.141.217.117:8088
 ```
 
-Use that endpoint with this client after the operator has deployed a compatible protocol 2 server. The running legacy server uses a different protocol. For a future domain, save a `wss://` URL.
+Use a protocol 2 endpoint with this client. For a future domain, save a `wss://` URL.
 
 Wallets, settings and local state normally live in `friendcoin-data` beside the executable. Keep that directory when replacing the executable, or choose a stable location with `--data-dir PATH`. Use `--wallet PATH` to open a file or folder directly.
 

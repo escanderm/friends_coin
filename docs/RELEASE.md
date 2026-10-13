@@ -38,4 +38,4 @@ macOS uses an ad-hoc signature; Apple notarization and Windows Authenticode sign
 
 ## Protocol 2 status
 
-This remains a migration candidate. Existing balances are prepared as a checkpoint; live activation requires agreement with the operator and holders. The client and server must use the same network identifier, genesis and rules. See MIGRATION.md.
+Client releases remain prereleases while the project is being validated. The client and server must use the same protocol, network identifier, genesis and rules. Server deployment is a separate operation maintained privately. See MIGRATION.md.

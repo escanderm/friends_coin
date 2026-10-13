@@ -230,7 +230,9 @@ async function openWallet(terminal, filename, dataDir) {
     console.log("Выбран старый незашифрованный кошелёк. Сохраню новую зашифрованную копию; исходный файл останется.");
     wallet.load(filename);
     if (!NAME_PATTERN.test(wallet.name)) throw new Error("Имя старого кошелька не подходит для новой сети");
-    const destination = path.join(dataDir, "wallet_" + wallet.name + ".fcwallet");
+    const destination = path.join(path.dirname(filename), "wallet_" + wallet.name + ".fcwallet");
+    if (fs.existsSync(destination)) throw new Error("Зашифрованная копия уже существует. Откройте файл: " + destination);
+    console.log("Зашифрованная копия будет сохранена рядом с исходным кошельком: " + destination);
     const password = await choosePassword(terminal);
     wallet.save(password, destination);
     rememberWallet(dataDir, destination);
@@ -317,9 +319,6 @@ async function main() {
   let user;
   try {
     console.log("FriendCoin " + version + " | " + network.networkId);
-    if ((options.network || "mainnet") === "mainnet" && version.includes("-")) {
-      console.log("Mainnet v2: кандидат миграции. Сеть 1.x использует другой протокол. До согласованного перехода проверяйте работу в testnet.");
-    }
     const config = resolveServerConfig({ argv: options.server ? ["--server", options.server] : [], cwd: dataDir });
     let serverUrl = config.serverUrl;
     if (!serverUrl && !options.server && process.cwd() !== dataDir && fs.existsSync(path.join(process.cwd(), CONFIG_FILE))) {

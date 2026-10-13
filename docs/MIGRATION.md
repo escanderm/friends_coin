@@ -1,6 +1,6 @@
 # FriendCoin client migration
 
-Protocol 2 is a new network candidate. Publishing a client does not migrate the running protocol 1 service.
+This client uses protocol 2. Publishing client releases does not automatically deploy server changes.
 
 ## Prepared balance checkpoint
 
@@ -14,11 +14,11 @@ The candidate preserves 2554.00 FC across three addresses from 112 legacy blocks
 
 This is an explicitly selected checkpoint, not validation of every historical protocol 1 operation. Holder agreement and an unchanged snapshot are required before activation. If the legacy chain advances, prepare a new candidate; never silently replace an already distributed genesis.
 
-The proposed rules remain 1.00 FC per block, a total cap of 1,000,000.00 FC including the checkpoint, and a minimum fee of 0.01 FC. Fees move existing units rather than increasing issuance. These rules have not been activated on the production server.
+The protocol 2 rules define 1.00 FC per block, a total cap of 1,000,000.00 FC including the checkpoint, and a minimum fee of 0.01 FC. Fees move existing units rather than increasing issuance. Client and server must use the same network configuration.
 
 ## Wallets
 
-The existing RSA keys derive the new checksummed FC2 addresses. In the original arrow menu, choose an old wallet or “Загрузить кошелёк с флешки/диска”. A file or relative folder path works. Selecting a legacy JSON wallet explicitly creates a separate encrypted .fcwallet file.
+The existing RSA keys derive the new checksummed FC2 addresses. In the original arrow menu, choose an old wallet or “Загрузить кошелёк с флешки/диска”. A file or relative folder path works. Selecting a legacy JSON wallet explicitly creates a separate encrypted .fcwallet file beside that JSON. The destination is displayed before asking for a password; an existing encrypted file is never overwritten.
 
 Back up the original first. Keep the encrypted file and its password separately, then open the encrypted copy and verify the address. The old file is not rewritten. Only the chosen path is remembered locally; passwords and private keys are not stored in UI settings.
 
@@ -30,6 +30,6 @@ With the client stopped, --restore-backup validates the backup and preserves the
 
 ## Activation
 
-Server operations are maintained privately. The server was accessed read-only and has not been upgraded by this work. Confirm an operator-approved protocol 2 endpoint before using the new client for the existing network. Testnet is separate and contains no legacy allocations.
+Server operations and deployment records are maintained privately. Use an operator-approved protocol 2 endpoint. Protocol 1 clients and servers are incompatible with protocol 2. Testnet is separate and contains no legacy allocations.
 
 Once live protocol 2 transfers begin, reverting to protocol 1 would omit them; recovery must account for those operations.

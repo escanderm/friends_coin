@@ -106,7 +106,8 @@ test("a selected legacy wallet from a folder is imported without rewriting the o
   }, external, data);
   assert.equal(opened.address, wallet.address);
   assert.equal(fs.readFileSync(filename, "utf8"), original);
-  const destination = path.join(data, "wallet_Legacy.fcwallet");
+  const destination = path.join(external, "wallet_Legacy.fcwallet");
   assert.equal(Wallet.inspect(destination).encrypted, true);
+  assert.equal(fs.existsSync(path.join(data, "wallet_Legacy.fcwallet")), false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(data, UI_CONFIG_FILE), "utf8")).walletPath, destination);
 });
