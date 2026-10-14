@@ -33,3 +33,11 @@ With the client stopped, --restore-backup validates the backup and preserves the
 Server operations and deployment records are maintained privately. Use an operator-approved protocol 2 endpoint. Protocol 1 clients and servers are incompatible with protocol 2. Testnet is separate and contains no legacy allocations.
 
 Once live protocol 2 transfers begin, reverting to protocol 1 would omit them; recovery must account for those operations.
+
+## NFT activation (2.1.0-rc.1)
+
+The NFT extension activates on mainnet at block 4. It preserves the v2 genesis, all three existing blocks, addresses and balances. Both peers and the archive must agree on `upgradeHash`; clients without the extension cannot join the upgraded relay. Use the matching new desktop executable and the same encrypted wallet. Do not replace or reset chain files.
+
+Before deployment, stop the old archive, back up its data and container configuration, and validate the backup with the new code. Activation requires the saved tip to be below block 4; if the old network advances to block 4 before the switch, do not deploy this configuration. A new height must be selected and shipped consistently to every client and server.
+
+Before any upgraded block is accepted, the saved original container/data can restore the prior service. Once block 4 or later has been accepted, reverting to old rules would discard new operations. Preserve the upgraded data and fix forward instead. The standalone NFT Lab is not migrated and does not grant ownership on mainnet.

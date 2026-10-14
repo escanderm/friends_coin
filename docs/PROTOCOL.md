@@ -29,3 +29,15 @@ Multiple relay connections share one ledger and pool. IDs/hashes deduplicate mes
 Wallet files use authenticated AES-256-GCM encryption with random salt/IV and bounded scrypt parameters. State files contain public ledger data, not wallet keys. Atomic state replacement keeps a previous verified backup; corruption fails closed. Imported legacy wallets are never silently overwritten.
 
 This implementation holds validated block branches and states in memory and stores a verified JSON snapshot. It targets a small network. Large-network pruning, a database-backed block index and separate mobile/light clients are future work.
+
+## NFT extension v1
+
+`nftActivationHeight` is an optional network parameter. It is excluded from the legacy rules/genesis hash to preserve all historical v2 blocks. Before the activation height, blocks use the original rules hash and reject NFT actions. From activation onward, blocks must use the NFT rules hash, which commits to the legacy rules hash, activation height, 5% miner / 1% author sale shares, floor rounding, and the 100-unit minimum sale price. Mainnet activates at height 4. A peer's `hello` and server's `welcome` must carry an identical `upgradeHash`; legacy or differently configured peers are rejected.
+
+NFT transactions use the separate `FriendCoin/NFT/transaction/v1` signing domain with fixed field order, the existing RSA keys, addresses, account nonces and proof of work. Types: `nft_mint`, `nft_transfer`, `nft_offer`, `nft_cancel`, `nft_buy`. The identifier commits to network, minting address and account nonce. Metadata is bounded, immutable, and contains a name, description, optional HTTPS/IPFS image URI and SHA-256 digest. Images and private keys never enter transaction payloads.
+
+Each token tracks its immutable creator, current owner, revision and optional sale price. Every NFT action increments its revision. Listing/cancelling/gifting requires the owner's signature; gifting also cancels any listing. A buy requires the buyer's signature and the exact seller, price and revision of the active listing. A successful buy clears the listing and transfers ownership atomically with payment. A pending purchase reserves the buyer's balance and token revision. Fork selection recomputes NFT state along with accounts and reconciles detached transactions.
+
+For a price P in minimal units, miner = floor(P*5/100), author = floor(P/100), seller = P-miner-author. The buyer is debited exactly P. `feeUnits` must equal the miner share, is included in P, and is paid by coinbase together with ordinary block reward and other fees. Creator, seller, buyer and miner account overlaps are supported. Other NFT actions pay the network minimum fee. Listing's `amountUnits` is its asking price, not an immediate transfer. Mint/cancel/gift use zero `amountUnits`.
+
+Ownership is derived only by replaying validated blocks, never from mutable sidecar records. PoW reorganization remains possible; NFT transfers have the same confirmation model as FC. This extension is native FriendCoin functionality, not an EVM contract or ERC-721.

@@ -1,11 +1,12 @@
 "use strict";
 const crypto = require("node:crypto");
+const nft = require("./nft");
 const {
   VERSION, ZERO_HASH, MAX_FUTURE_MS, RETARGET_FACTOR, HASH_PATTERN, BLOCK_FIELDS,
   assert, fail, isSafeInteger, safeAdd, onlyFields, canonicalPublicKey, addressFromPublicKey,
   isAddress, targetToBigInt, targetToHex, hashMeetsTarget, blockWork,
   transactionPayload, transactionSigningBytes, transactionId, normalizeTransaction,
-  normalizeCoinbase, validateNetwork, rulesHash, blockSigningBytes, blockHash,
+  normalizeCoinbase, validateNetwork, rulesHash, nftRulesHash, blockSigningBytes, blockHash,
 } = require("./protocol");
 
 // Local admission policy; this limit does not change block consensus or genesis.
@@ -13,6 +14,11 @@ const MAX_PENDING_TRANSACTIONS = 1000;
 
 class Transaction {
   constructor(data = {}) {
+    if (nft.isNft(data)) {
+      onlyFields(data, nft.FIELDS, "BAD_TRANSACTION");
+      Object.assign(this, { version: VERSION, from: null, publicKey: null, timestamp: Date.now(), signature: null, metadata: null, amountUnits: 0, revision: 0 }, data);
+      return;
+    }
     onlyFields(data, ["version", "networkId", "from", "to", "amountUnits", "feeUnits", "nonce", "publicKey", "timestamp", "signature"], "BAD_TRANSACTION");
     this.version = data.version ?? VERSION;
     this.networkId = data.networkId;
@@ -73,10 +79,11 @@ function freezeBlock(block) {
   return Object.freeze(block);
 }
 function cloneState(state) {
-  return { accounts: new Map(Array.from(state.accounts, ([address, value]) => [address, { ...value }])), issuedUnits: state.issuedUnits };
+  return { accounts: new Map(Array.from(state.accounts, ([address, value]) => [address, { ...value }])), issuedUnits: state.issuedUnits, nfts: new Map(state.nfts) };
 }
 function account(state, address) { return state.accounts.get(address) ?? { balance: 0, nonce: 0 }; }
 function applyTransaction(state, tx) {
+  if (nft.isNft(tx)) return nft.apply(state, tx);
   const sender = account(state, tx.from);
   assert(sender.nonce < Number.MAX_SAFE_INTEGER && tx.nonce === sender.nonce + 1, "BAD_NONCE", "Transaction nonce is not the next account nonce");
   const cost = safeAdd(tx.amountUnits, tx.feeUnits);
@@ -93,9 +100,10 @@ class Blockchain {
   constructor(network) {
     this.network = validateNetwork(network ?? require("./networks/mainnet.json"));
     this.rulesHash = rulesHash(this.network);
+    this.upgradeHash = nftRulesHash(this.network);
     this.pendingTransactions = [];
     const genesis = freezeBlock(this.createGenesisBlock());
-    const state = { accounts: new Map(), issuedUnits: 0 };
+    const state = { accounts: new Map(), issuedUnits: 0, nfts: new Map() };
     for (const allocation of this.network.genesis.allocations) {
       state.accounts.set(allocation.address, { balance: allocation.amountUnits, nonce: 0 });
       state.issuedUnits = safeAdd(state.issuedUnits, allocation.amountUnits);
@@ -112,6 +120,12 @@ class Blockchain {
       target: this.network.initialTarget, nonce: 0,
       transactions: this.network.genesis.allocations.map(value => ({ version: VERSION, type: "allocation", networkId: this.network.networkId, to: value.address, amountUnits: value.amountUnits })) });
   }
+  getRulesHash(height) { return this.network.nftActivationHeight !== undefined && height >= this.network.nftActivationHeight ? this.upgradeHash : this.rulesHash; }
+  getNft(id, { pending = false } = {}) { return (pending ? this._poolState() : this._tip.state).nfts.get(id) ?? null; }
+  getNfts(owner = null) { return [...this._tip.state.nfts.values()].filter(token => owner === null || token.owner === owner); }
+  _checkNftHeight(tx, height) {
+    if (nft.isNft(tx)) assert(this.network.nftActivationHeight !== undefined && height >= this.network.nftActivationHeight, "NFT_NOT_ACTIVE", "NFT ещё не активированы на этой высоте");
+  }
   getLastBlock() { return this._tip.block; }
   getBlock(hash) { return this._blocks.get(hash)?.block ?? null; }
   hasBlock(hash) { return this._blocks.has(hash); }
@@ -121,7 +135,7 @@ class Blockchain {
   getIssuedUnits() { return this._tip.state.issuedUnits; }
   _poolState() {
     const state = cloneState(this._tip.state);
-    for (const tx of this.pendingTransactions) applyTransaction(state, normalizeTransaction(tx, this.network));
+    for (const tx of this.pendingTransactions) { this._checkNftHeight(tx, this._tip.block.height + 1); applyTransaction(state, normalizeTransaction(tx, this.network)); }
     return state;
   }
   getAvailableBalanceUnits(address) { return account(this._poolState(), address).balance; }
@@ -134,6 +148,7 @@ class Blockchain {
     const tx = new Transaction(normalizeTransaction(raw, this.network));
     assert(tx.timestamp <= Date.now() + MAX_FUTURE_MS, "BAD_TIMESTAMP", "Transaction timestamp is too far in the future");
     assert(!this.pendingTransactions.some(existing => existing.getId() === tx.getId()), "DUPLICATE_TRANSACTION", "Transaction is already pending");
+    this._checkNftHeight(tx, this._tip.block.height + 1);
     const state = this._poolState(); applyTransaction(state, tx);
     this.pendingTransactions.push(Object.freeze(tx)); return tx;
   }
@@ -160,7 +175,7 @@ class Blockchain {
     const source = raw instanceof Block ? raw.toJSON() : raw;
     onlyFields(source, BLOCK_FIELDS, "BAD_BLOCK");
     assert(source.version === VERSION && source.networkId === this.network.networkId, "BAD_NETWORK", "Block belongs to another protocol or network");
-    assert(source.rulesHash === this.rulesHash, "BAD_RULES", "Block uses another network rule set");
+    assert(source.rulesHash === this.getRulesHash(source.height), "BAD_RULES", "Block uses another network rule set");
     assert(isSafeInteger(source.height) && isSafeInteger(source.timestamp) && isSafeInteger(source.nonce), "BAD_BLOCK", "Invalid block height, timestamp or nonce");
     assert(typeof source.previousHash === "string" && HASH_PATTERN.test(source.previousHash) && typeof source.hash === "string" && HASH_PATTERN.test(source.hash), "BAD_HASH", "Invalid block hash encoding");
     assert(targetToBigInt(source.target) <= targetToBigInt(this.network.maxTarget), "BAD_TARGET", "Declared target exceeds network maximum");
@@ -182,6 +197,7 @@ class Blockchain {
     assert(block.timestamp > parent.block.timestamp && block.timestamp <= Date.now() + MAX_FUTURE_MS, "BAD_TIMESTAMP", "Block timestamp must increase and remain within the future bound");
     const state = cloneState(parent.state); let fees = 0;
     for (const tx of block.transactions.slice(1)) {
+      this._checkNftHeight(tx, block.height);
       assert(tx.timestamp <= block.timestamp, "BAD_TIMESTAMP", "Transaction timestamp exceeds block timestamp");
       applyTransaction(state, tx); fees = safeAdd(fees, tx.feeUnits);
     }
@@ -204,8 +220,9 @@ class Blockchain {
           const tx = new Transaction(normalizeTransaction(raw, this.network)), id = tx.getId();
           if (seen.has(id)) continue;
           assert(tx.timestamp <= Date.now() + MAX_FUTURE_MS, "BAD_TIMESTAMP", "Transaction is too far in the future");
+          this._checkNftHeight(tx, this._tip.block.height + 1);
           applyTransaction(state, tx); seen.add(id); remaining.push(Object.freeze(tx)); progress = true;
-        } catch (error) { if (error.code === "BAD_NONCE" || error.code === "INSUFFICIENT_FUNDS") deferred.push(raw); }
+        } catch (error) { if (["BAD_NONCE", "INSUFFICIENT_FUNDS", "NFT_NOT_FOUND", "NFT_STALE", "NFT_NOT_OWNER", "NFT_NOT_FOR_SALE"].includes(error.code)) deferred.push(raw); }
       }
       if (!progress) break; waiting = deferred;
     }
@@ -282,7 +299,7 @@ class Blockchain {
     }
     const timestamp = Math.max(Date.now(), parent.block.timestamp + 1, ...selected.map(tx => tx.timestamp)), height = parent.block.height + 1;
     const reward = Math.min(this.network.blockRewardUnits, this.network.maxSupplyUnits - parent.state.issuedUnits);
-    const block = new Block({ version: VERSION, networkId: this.network.networkId, rulesHash: this.rulesHash, height, timestamp,
+    const block = new Block({ version: VERSION, networkId: this.network.networkId, rulesHash: this.getRulesHash(height), height, timestamp,
       previousHash: parent.block.hash, target: this._expectedTarget(parent), nonce: 0,
       transactions: [{ version: VERSION, type: "coinbase", networkId: this.network.networkId, height, to: minerAddress, amountUnits: safeAdd(reward, fees), timestamp }, ...selected] });
     // Nonce is last in the canonical header; avoid repeatedly serializing transactions.

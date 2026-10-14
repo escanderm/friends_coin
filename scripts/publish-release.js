@@ -53,10 +53,11 @@ module.exports = async function publish({ github, context, core }) {
       draft: true,
       prerelease,
       body: [
-        `FriendCoin ${version}: protocol 2 client for macOS, Linux, and Windows.`,
+        `FriendCoin ${version}: NFT-enabled desktop client for macOS, Linux, and Windows.`,
         prerelease
-          ? "This is a release candidate. Connect to a compatible protocol 2 server; client downloads do not deploy server changes."
+          ? "This is a release candidate. Mainnet NFT rules activate at block 4. Update to a compatible NFT-aware server; client downloads do not deploy server changes."
           : "Connect to a compatible protocol 2 server. Review docs/MIGRATION.md before upgrading an existing installation.",
+        "Use nft for the arrow-key menu: mint, list, buy, cancel, gift. Purchases pay 94% to the seller, 5% to the miner and 1% to the original author. The buyer pays exactly the listed total. Existing blocks, wallets and balances are preserved.",
         "Wallets and local settings are stored outside the executable. Verify downloads against SHA256SUMS.",
         "macOS binaries use an ad-hoc signature, not Apple notarization. Windows binaries are not Authenticode-signed.",
         "See README.md and docs/RELEASE.md in the tagged source for usage, migration, and limitations.",

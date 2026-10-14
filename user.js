@@ -118,7 +118,7 @@ class User extends EventEmitter {
       if (!connection.identified) socket.terminate();
     }, 5000);
     socket.on("open", () => {
-      this._send(url, { type: "hello", protocolVersion: PROTOCOL_VERSION, clientVersion: version, networkId: this.network.networkId, genesisHash: this.blockchain.chain[0].hash });
+      this._send(url, { type: "hello", protocolVersion: PROTOCOL_VERSION, clientVersion: version, networkId: this.network.networkId, genesisHash: this.blockchain.chain[0].hash, ...(this.blockchain.upgradeHash ? { upgradeHash: this.blockchain.upgradeHash } : {}) });
     });
     socket.on("message", data => {
       try { this._handle(url, parseMessage(data)); }
@@ -217,7 +217,7 @@ class User extends EventEmitter {
     if (!connection) return;
     if (message.type === "welcome") {
       if (connection.phase !== "hello") throw new Error("Повторное приветствие сервера");
-      if (message.protocolVersion !== PROTOCOL_VERSION || message.networkId !== this.network.networkId || message.genesisHash !== this.blockchain.chain[0].hash || typeof message.challenge !== "string" || !/^(?:[a-f0-9]{64}|[A-Za-z0-9_-]{43})$/.test(message.challenge) || typeof message.peerId !== "string") throw new Error("Несовместимый сервер");
+      if (message.upgradeHash !== this.blockchain.upgradeHash || message.protocolVersion !== PROTOCOL_VERSION || message.networkId !== this.network.networkId || message.genesisHash !== this.blockchain.chain[0].hash || typeof message.challenge !== "string" || !/^(?:[a-f0-9]{64}|[A-Za-z0-9_-]{43})$/.test(message.challenge) || typeof message.peerId !== "string") throw new Error("Несовместимый сервер");
       connection.id = message.peerId;
       connection.phase = "identify";
       this._send(url, { type: "identify", identity: signIdentity(this.wallet, this.network.networkId, message.challenge) });
@@ -342,6 +342,22 @@ class User extends EventEmitter {
     this._save();
     this._broadcast({ type: "transaction", transaction: accepted });
     this.emit("transaction", accepted);
+    return { transaction: accepted, id: transactionId(accepted) };
+  }
+
+  sendNft(type, { tokenId, to = this.wallet.address, amountUnits = 0, metadata = null, revision = 0 } = {}) {
+    if (!this.ready) throw new Error("Подождите подключения и синхронизации");
+    const nft = require("./nft");
+    if (!nft.TYPES.has(type)) throw new Error("Неизвестная операция NFT");
+    const nonce = this.blockchain.getNextNonce(this.wallet.address);
+    const feeUnits = type === "nft_buy" ? nft.splitSale(amountUnits).minerUnits : this.network.minFeeUnits;
+    const transaction = new Transaction({ type, networkId: this.network.networkId, from: this.wallet.address, to,
+      amountUnits, feeUnits, nonce, publicKey: this.wallet.keys.publicKey,
+      tokenId: type === "nft_mint" ? nft.tokenId(this.network.networkId, this.wallet.address, nonce) : tokenId,
+      revision, metadata });
+    this.wallet.signTransaction(transaction);
+    const accepted = this.blockchain.addTransaction(transaction);
+    this._save(); this._broadcast({ type: "transaction", transaction: accepted }); this.emit("transaction", accepted);
     return { transaction: accepted, id: transactionId(accepted) };
   }
 

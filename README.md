@@ -4,7 +4,7 @@ Your own cryptocurrency — for your own people.
 
 This repository contains the **desktop client**: wallets, signed transfers, mining, local validation and standalone builds. The server implementation and its deployment files are maintained separately.
 
-Version `2.0.0-rc.6` keeps the original wallet menu: **↑ / ↓ and Enter** in an interactive terminal. Encrypted copies of legacy wallets are saved beside the original JSON. This client requires a protocol 2 server.
+Version `2.1.0-rc.1` keeps the original wallet menu: **↑ / ↓ and Enter** in an interactive terminal. Encrypted copies of legacy wallets are saved beside the original JSON. This client requires an NFT-aware server with the same activation settings. Mainnet NFT rules activate at block 4; historical blocks and FC addresses are preserved.
 
 ## Download a client
 
@@ -80,3 +80,15 @@ npm run build:smoke
 GitHub Actions tests and builds each of the four desktop targets. A matching version tag publishes the client binaries and checksums after all targets pass. Server integration checks run separately in the private project; the public build does not fetch or embed server sources.
 
 See [release instructions](docs/RELEASE.md), [client migration](docs/MIGRATION.md) and [protocol rules](docs/PROTOCOL.md).
+
+## NFT
+
+Run `nft` to open the arrow-key menu. Mint a JPEG, PNG or WebP (up to 10 MiB), view your confirmed NFTs, list one for sale, cancel a listing, give one away, or buy a listed NFT. Relative image paths such as `../../photo.jpg` work. The local copy is saved under the selected data directory in `nft-media`; the original is unchanged. The file itself is not uploaded. An optional HTTPS/IPFS link and the image hash are recorded permanently with the name and description. Without a public link, recipients need the image file separately.
+
+A purchase moves FC and NFT ownership together in one transaction. The buyer pays the listed price: 94% goes to the seller, 5% to the block miner and 1% to the original minting address. When seller and author are the same wallet, it receives both shares. The usual block reward is additional to the miner's sale share. No additional purchase fee is charged.
+
+Prices start at 1 FC. Miner and author shares are rounded down independently to 0.01 FC; any remainder goes to the seller. Minting, listing, cancelling and gifting use the existing minimum transaction fee (0.01 FC on mainnet). Ordinary FC transfer fees are unchanged. Royalties apply to purchases recorded through this protocol; a gift with a separate off-chain payment cannot be recognized as a sale.
+
+Listings and purchases take effect after mining. A changed price, cancelled listing or changed owner invalidates a previously prepared purchase. The client displays the total and each share before signing. Metadata and the original author address cannot be changed after minting. The author's address identifies the minter; it is not proof of copyright.
+
+`--network nft-testnet` selects a separate, fast NFT test network. The earlier browser experiment under `experiments/nft-lab` has its own ledger and does not automatically mint anything on mainnet.

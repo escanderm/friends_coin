@@ -1,0 +1,18 @@
+{
+  "networkId": "friendcoin-nft-testnet-v1",
+  "protocolVersion": 2,
+  "decimals": 2,
+  "blockRewardUnits": 100,
+  "maxSupplyUnits": 100000000,
+  "minFeeUnits": 1,
+  "maxTransactionsPerBlock": 100,
+  "targetBlockTime": 10,
+  "adjustmentInterval": 10,
+  "initialTarget": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "maxTarget": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "genesis": {
+    "timestamp": 1767225600000,
+    "allocations": []
+  },
+  "nftActivationHeight": 1
+}

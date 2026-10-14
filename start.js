@@ -340,13 +340,14 @@ function rulesText(blockchain) {
     "Награда за следующий блок: " + formatAmountUnits(reward) + " FC + комиссии переводов",
     "Выпущено: " + formatAmountUnits(issued) + " / " + formatAmountUnits(network.maxSupplyUnits) + " FC",
     "Минимальная комиссия: " + formatAmountUnits(network.minFeeUnits) + " FC; переводов в блоке: до " + network.maxTransactionsPerBlock,
+    ...(network.nftActivationHeight === undefined ? [] : ["NFT с блока #" + network.nftActivationHeight + ": продажа — 94% продавцу, 5% майнеру, 1% автору; цена от 1 FC; доли округляются вниз до 0,01 FC, остаток продавцу"]),
   ].join("\n");
 }
 
 function printHelp() {
   console.log("FriendCoin " + version + "\nPortable wallet, full node and optional miner.\n");
-  console.log("Options:\n--server ws://host:8088 | wss://domain\n--relay URL (repeatable additional relay)\n--data-dir PATH\n--network mainnet|testnet\n--wallet PATH\n--restore-backup\n--version\n--help");
-  console.log("\nCommands:\nbalance | address | friends | info | rules | send <address|name> <amount> [fee]\nmine | stop | history | syncpool | help | exit");
+  console.log("Options:\n--server ws://host:8088 | wss://domain\n--relay URL (repeatable additional relay)\n--data-dir PATH\n--network mainnet|testnet|nft-testnet\n--wallet PATH\n--restore-backup\n--version\n--help");
+  console.log("\nCommands:\nbalance | address | friends | info | rules | send <address|name> <amount> [fee]\nmine | stop | history | syncpool | nft | help | exit");
 }
 
 async function runCLI(terminal, user) {
@@ -384,6 +385,7 @@ async function runCLI(terminal, user) {
         switch ((command || "").toLowerCase()) {
           case "": break;
           case "help": printHelp(); break;
+          case "nft": await require("./nft-cli").runNftMenu(terminal, user); break;
           case "balance": user.showBalance(); break;
           case "address": console.log(user.wallet.address); break;
           case "info":
@@ -427,8 +429,8 @@ async function runCLI(terminal, user) {
             const tip = user.blockchain.getLastBlock().height;
             for (const block of user.blockchain.chain.slice(-20)) {
               for (const transaction of block.transactions) {
-                if (transaction.from === user.wallet.address || transaction.to === user.wallet.address) {
-                  console.log("#" + block.height + "  " + (transaction.type || "transfer") + "  " + formatAmountUnits(transaction.amountUnits) + " FC  подтверждений: " + (tip - block.height + 1));
+                if (transaction.from === user.wallet.address || transaction.to === user.wallet.address || (transaction.type === "nft_buy" && user.blockchain.getNft(transaction.tokenId)?.creator === user.wallet.address)) {
+                  console.log("#" + block.height + "  " + (transaction.type || "transfer") + "  " + formatAmountUnits(transaction.amountUnits) + " FC" + (transaction.tokenId ? "  NFT: " + transaction.tokenId : "") + "  подтверждений: " + (tip - block.height + 1));
                 }
               }
             }

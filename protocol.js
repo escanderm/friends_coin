@@ -68,12 +68,14 @@ function formatAmountUnits(units) {
   return (BigInt(units) / 100n).toString() + "." + (BigInt(units) % 100n).toString().padStart(2, "0");
 }
 function transactionPayload(tx) {
+  if (require("./nft").isNft(tx)) return require("./nft").payload(tx);
   // Fixed order and JSON separators are part of the signature protocol.
   return { version: tx.version, networkId: tx.networkId, from: tx.from, to: tx.to, amountUnits: tx.amountUnits, feeUnits: tx.feeUnits, nonce: tx.nonce, publicKey: tx.publicKey, timestamp: tx.timestamp };
 }
-function transactionSigningBytes(tx) { return Buffer.from("FriendCoin/transaction/v2\n" + JSON.stringify(transactionPayload(tx)), "utf8"); }
+function transactionSigningBytes(tx) { return Buffer.from((require("./nft").isNft(tx) ? "FriendCoin/NFT/transaction/v1\n" : "FriendCoin/transaction/v2\n") + JSON.stringify(transactionPayload(tx)), "utf8"); }
 function transactionId(tx) { return sha256(transactionSigningBytes(tx)); }
 function normalizeTransaction(raw, network, { allowUnsigned = false } = {}) {
+  if (require("./nft").isNft(raw)) return require("./nft").normalize(raw, network, { allowUnsigned });
   onlyFields(raw, TRANSFER_FIELDS, "BAD_TRANSACTION");
   assert(raw.version === VERSION, "BAD_VERSION", "Unsupported transaction version");
   assert(typeof raw.networkId === "string" && NETWORK_PATTERN.test(raw.networkId), "BAD_NETWORK", "Invalid network identifier");
@@ -107,7 +109,8 @@ function normalizeCoinbase(raw, network) {
 }
 function validateNetwork(raw) {
   const fields = ["networkId", "protocolVersion", "decimals", "blockRewardUnits", "maxSupplyUnits", "minFeeUnits", "maxTransactionsPerBlock", "targetBlockTime", "adjustmentInterval", "initialTarget", "maxTarget", "genesis"];
-  onlyFields(raw, fields, "BAD_NETWORK_CONFIG");
+  onlyFields(raw, [...fields, "nftActivationHeight"], "BAD_NETWORK_CONFIG");
+  if (raw.nftActivationHeight !== undefined) assert(isSafeInteger(raw.nftActivationHeight, 1), "BAD_NETWORK_CONFIG", "Invalid NFT activation height");
   assert(typeof raw.networkId === "string" && NETWORK_PATTERN.test(raw.networkId), "BAD_NETWORK_CONFIG", "Invalid network identifier");
   assert(raw.protocolVersion === VERSION && raw.decimals === 2, "BAD_NETWORK_CONFIG", "Protocol v2 uses two decimal places");
   for (const field of ["blockRewardUnits", "maxSupplyUnits", "minFeeUnits", "maxTransactionsPerBlock", "targetBlockTime", "adjustmentInterval"]) assert(isSafeInteger(raw[field], 1), "BAD_NETWORK_CONFIG", "Invalid " + field);
@@ -135,10 +138,17 @@ function validateNetwork(raw) {
   }
   const config = Object.fromEntries(fields.filter(field => field !== "genesis").map(field => [field, raw[field]]));
   config.genesis = Object.freeze({ timestamp: raw.genesis.timestamp, allocations: Object.freeze(allocations), legacyCheckpoint });
+  if (raw.nftActivationHeight !== undefined) config.nftActivationHeight = raw.nftActivationHeight;
   return Object.freeze(config);
 }
 function rulesHash(network) {
+  const { nftActivationHeight, ...legacy } = network;
+  network = legacy;
   return sha256("FriendCoin/rules/v2\n" + stableStringify({ network, signature: "RSA2048-SHA256-PKCS1v1.5-canonical-json-v2", address: "FC2-SHA256-SPKI-DER-checksum-v2", retargetFactor: RETARGET_FACTOR, maxFutureMs: MAX_FUTURE_MS, retargetStartsAt: "adjustmentInterval+1", coinbasePosition: "first", cappedReward: "min(blockRewardUnits,maxSupplyUnits-issuedUnits)+fees", forkTieBreak: "lowest-tip-hash" }));
+}
+function nftRulesHash(network) {
+  if (network.nftActivationHeight === undefined) return undefined;
+  return sha256("FriendCoin/NFT/rules/v1\n" + stableStringify({ base: rulesHash(network), activationHeight: network.nftActivationHeight, minerPercent: 5, authorPercent: 1, rounding: "floor-each-share-remainder-to-seller", minSaleUnits: 100 }));
 }
 function blockHeader(block) {
   const transactions = block.transactions.map(tx => {
@@ -150,4 +160,4 @@ function blockHeader(block) {
 }
 function blockSigningBytes(block) { return Buffer.from("FriendCoin/block/v2\n" + JSON.stringify(blockHeader(block)), "utf8"); }
 function blockHash(block) { return sha256(blockSigningBytes(block)); }
-module.exports = { COIN, VERSION, ZERO_HASH, MAX_FUTURE_MS, RETARGET_FACTOR, HASH_PATTERN, BLOCK_FIELDS, ProtocolError, fail, assert, isSafeInteger, safeAdd, onlyFields, stableStringify, sha256, canonicalPublicKey, addressFromPublicKey, isAddress, targetToBigInt, targetToHex, hashMeetsTarget, blockWork, parseAmountUnits, formatAmountUnits, transactionPayload, transactionSigningBytes, transactionId, normalizeTransaction, normalizeCoinbase, validateNetwork, rulesHash, blockHeader, blockSigningBytes, blockHash };
+module.exports = { COIN, VERSION, ZERO_HASH, MAX_FUTURE_MS, RETARGET_FACTOR, HASH_PATTERN, BLOCK_FIELDS, ProtocolError, fail, assert, isSafeInteger, safeAdd, onlyFields, stableStringify, sha256, canonicalPublicKey, addressFromPublicKey, isAddress, targetToBigInt, targetToHex, hashMeetsTarget, blockWork, parseAmountUnits, formatAmountUnits, transactionPayload, transactionSigningBytes, transactionId, normalizeTransaction, normalizeCoinbase, validateNetwork, rulesHash, nftRulesHash, blockHeader, blockSigningBytes, blockHash };
