@@ -344,10 +344,8 @@ function rulesText(blockchain) {
   ].join("\n");
 }
 
-function printHelp() {
-  console.log("FriendCoin " + version + "\nPortable wallet, full node and optional miner.\n");
-  console.log("Options:\n--server ws://host:8088 | wss://domain\n--relay URL (repeatable additional relay)\n--data-dir PATH\n--network mainnet|testnet|nft-testnet\n--wallet PATH\n--restore-backup\n--version\n--help");
-  console.log("\nCommands:\nbalance | address | friends | info | rules | send <address|name> <amount> [fee]\nmine | stop | history | syncpool | nft | help | exit");
+function printHelp({ output = process.stdout, launchOptions = true } = {}) {
+  console.log(require("./terminal-ui").renderHelp(version, { output, launchOptions }));
 }
 
 async function runCLI(terminal, user) {
@@ -369,12 +367,17 @@ async function runCLI(terminal, user) {
       (result.pending ? "Ожидают блока: " + result.pending + "." : "Пул пуст — неподтверждённых переводов нет.") +
       (result.remaining ? " Ожидается ответов: " + result.remaining : " Ожидание ответов завершено."));
   };
+  const ready = () => {
+    const height = user.blockchain.getLastBlock().height;
+    terminal.notify("Синхронизация завершена · блок #" + height + " · баланс " + formatAmountUnits(user.blockchain.getBalanceUnits(user.wallet.address)) + " FC");
+  };
+  user.on("ready", ready);
   user.on("miningStarted", started);
   user.on("miningProgress", progress);
   user.on("poolSync", pool);
   try {
-    printHelp();
-    user.showBalance();
+    printHelp({ output: terminal.output, launchOptions: false });
+    console.log(require("./terminal-ui").renderBalance(user, { output: terminal.output }));
     console.log("Цель сети: " + durationText(user.network.targetBlockTime) + " на блок в среднем. Пересчёт сложности: каждые " + user.network.adjustmentInterval + " блоков. Подробности: rules");
     while (!terminal.rl.closed) {
       let input;
@@ -384,9 +387,9 @@ async function runCLI(terminal, user) {
       try {
         switch ((command || "").toLowerCase()) {
           case "": break;
-          case "help": printHelp(); break;
+          case "help": printHelp({ output: terminal.output, launchOptions: false }); break;
           case "nft": await require("./nft-cli").runNftMenu(terminal, user); break;
-          case "balance": user.showBalance(); break;
+          case "balance": console.log(require("./terminal-ui").renderBalance(user, { output: terminal.output })); break;
           case "address": console.log(user.wallet.address); break;
           case "info":
             console.log("Сеть: " + user.network.networkId + "\nБлок: " + user.blockchain.getLastBlock().height + "\nХеш: " + user.blockchain.getLastBlock().hash + "\nНакопленная работа: " + user.blockchain.getChainwork() + "\nПодключено relay: " + [...user.connections.values()].filter(connection => connection.identified).length + "\nГотов: " + (user.ready ? "да" : "подключение или синхронизация") + "\nПул: " + user.blockchain.pendingTransactions.length);
@@ -443,6 +446,7 @@ async function runCLI(terminal, user) {
     }
   } finally {
     terminal.setStatus("");
+    user.removeListener("ready", ready);
     user.removeListener("miningStarted", started);
     user.removeListener("miningProgress", progress);
     user.removeListener("poolSync", pool);

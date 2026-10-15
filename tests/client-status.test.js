@@ -117,6 +117,7 @@ test("CLI shows mining start/progress/result and pool results, then detaches lis
   const terminal = { rl: {}, setStatus(message) { statuses.push(message); }, notify(message) { messages.push(message); }, async question() {
     if (calls++ === 0) return "mine";
     if (calls === 2) {
+      user.emit("ready");
       user.emit("miningProgress", { height: 1, nonce: 500, hashrate: 2000, elapsedMs: 250 });
       user.emit("miningProgress", { height: 1, nonce: 600, hashrate: 2000, elapsedMs: 300 });
       user.emit("poolSync", { status: "received", received: 0, added: 0, pending: 0, remaining: 0 });
@@ -126,13 +127,14 @@ test("CLI shows mining start/progress/result and pool results, then detaches lis
   } };
   user.blockchain.mineBlock = async () => ({ height: 1, hash: "test-block" });
   await runCLI(terminal, user);
+  assert.ok(messages.some(line => line.includes("Синхронизация завершена")));
   assert.ok(messages.some(line => line.includes("Майнинг запущен")));
   assert.equal(messages.filter(line => line.includes("kH/s")).length, 0);
   assert.ok(statuses.some(line => line.includes("kH/s")));
   assert.equal(statuses.at(-1), "");
   assert.ok(messages.some(line => line.includes("Добыт блок #1")));
   assert.ok(messages.some(line => line.includes("Пул пуст") && line.includes("Ожидание ответов")));
-  for (const name of ["miningStarted", "miningProgress", "poolSync"]) assert.equal(user.listenerCount(name), 0);
+  for (const name of ["ready", "miningStarted", "miningProgress", "poolSync"]) assert.equal(user.listenerCount(name), 0);
 });
 
 // Render the ANSI cursor operations so repeated updates must occupy one visible row.

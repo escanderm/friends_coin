@@ -392,7 +392,7 @@ class User extends EventEmitter {
   showBalance() {
     const total = this.blockchain.getBalanceUnits(this.wallet.address);
     const available = this.blockchain.getAvailableBalanceUnits(this.wallet.address);
-    this.log("Баланс: " + formatAmountUnits(total) + " FC | доступно: " + formatAmountUnits(available) + " FC");
+    this.log("Баланс: " + formatAmountUnits(total) + " FC | доступно: " + formatAmountUnits(available) + " FC" + (this.ready ? "" : " · локальные данные, ожидаем синхронизацию"));
     return { total, available };
   }
 

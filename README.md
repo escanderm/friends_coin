@@ -4,7 +4,7 @@ Your own cryptocurrency — for your own people.
 
 This repository contains the **desktop client**: wallets, signed transfers, mining, local validation and standalone builds. The server implementation and its deployment files are maintained separately.
 
-Version `2.1.0-rc.1` keeps the original wallet menu: **↑ / ↓ and Enter** in an interactive terminal. Encrypted copies of legacy wallets are saved beside the original JSON. This client requires an NFT-aware server with the same activation settings. Mainnet NFT rules activate at block 4; historical blocks and FC addresses are preserved.
+Version `2.1.0-rc.2` keeps the original wallet menu: **↑ / ↓ and Enter** in an interactive terminal. Encrypted copies of legacy wallets are saved beside the original JSON. This client requires an NFT-aware server with the same activation settings. Mainnet NFT rules activate at block 4; historical blocks and FC addresses are preserved.
 
 ## Download a client
 
@@ -51,6 +51,10 @@ npm run client -- --server wss://your-domain.example
 For a test network use `--network testnet --server ws://your-test-relay:8088`. The test relay is operated separately. Testnet coins do not affect mainnet balances.
 
 ## Commands
+
+The command guide groups wallet, NFT, mining, network and general commands into separate sections. Wide terminals show two columns; narrow windows use a single column. Interactive output uses restrained colors, while redirected output and `NO_COLOR` stay plain. Wallet and NFT selection still uses arrow keys.
+
+The balance panel labels cached amounts as local data until synchronization completes, then reports the updated balance. Wallet files, chain storage and network rules are unchanged.
 
 The command prompt keeps the original command-based workflow:
 
